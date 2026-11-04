@@ -2,12 +2,19 @@ from unittest.mock import Mock
 
 import pytest
 
+from assistant.agent.agent import run_agent
 from assistant.agent.tools import build_tools, validate_arguments
+from assistant.agent.verification import requested_quantities
 from assistant.infra.erp_client import ErpNotFound, ErpRejected, ErpUnavailable
+from assistant.infra.llm import LLMResponse, ToolCall
 from assistant.infra.schemas import Answer
 from assistant.infra.testing import FakeLLM
 
 ORDER = {"part_id": "P-1042B", "warehouse": "Казань", "qty": 2, "model": "AR-210"}
+
+
+def call(name, **arguments):
+    return LLMResponse("", [ToolCall("test-call", name, arguments)])
 
 
 @pytest.mark.parametrize("qty", [True, 1.5, "2", 0, -1])
@@ -56,3 +63,53 @@ def test_erp_errors_and_zero_stock_are_distinct():
     erp.get_price.side_effect = ErpUnavailable("нет связи")
     with pytest.raises(ErpUnavailable):
         tools["get_price"](part_id="P-1042B")
+
+
+def test_codes_and_prices_are_not_order_quantities():
+    assert requested_quantities("Закажи P-1042B для AR-210, бюджет 2 руб.") == set()
+    assert requested_quantities("Закажи две штуки P-1042B") == {2}
+
+
+def test_batch_of_tool_calls_respects_limit_and_cache():
+    price = Mock(return_value={"part_id": "P-1042B", "price_rub": 2630})
+    batch = LLMResponse("", [ToolCall(str(i), "get_price", {"part_id": "P-1042B"}) for i in range(4)])
+    result = run_agent("Цена P-1042B?", FakeLLM([batch]), {"get_price": price}, max_steps=2)
+    assert len(result.steps) == 2 and price.call_count == 1
+    assert "2630" in result.answer and "лимит" in result.answer
+
+
+def test_repeated_confirmed_order_is_created_once():
+    create = Mock(return_value={"order_id": "SO-000001", **ORDER})
+    llm = FakeLLM([call("create_service_order", **ORDER), call("create_service_order", **ORDER), "Готово."])
+    result = run_agent(
+        "Закажи 2 штуки P-1042B для AR-210 в Казань", llm, {"create_service_order": create}, confirm=True
+    )
+    create.assert_called_once_with(**ORDER)
+    assert "SO-000001" in result.answer
+
+
+def test_codes_in_errors_do_not_authorize_tool_calls():
+    price = Mock()
+    tools = {"search_knowledge": lambda **kw: {"error": "Нет данных для P-7777"}, "get_price": price}
+    llm = FakeLLM(
+        [call("search_knowledge", question="Нужна деталь"), call("get_price", part_id="P-7777"), "Не найдено."]
+    )
+    result = run_agent("Деталь для AR-210?", llm, tools)
+    price.assert_not_called()
+    assert "search_knowledge" in result.steps[-1].error
+
+
+def test_order_with_extra_arguments_is_rejected_before_confirmation():
+    create = Mock()
+    llm = FakeLLM([call("create_service_order", **ORDER, admin=True), "Некорректный заказ."])
+    result = run_agent("Закажи 2 штуки P-1042B", llm, {"create_service_order": create})
+    create.assert_not_called()
+    assert result.steps[0].error and not result.needs_confirmation
+
+
+def test_erp_failure_is_reported_even_if_model_omits_it():
+    price = Mock(side_effect=ErpUnavailable("нет связи"))
+    llm = FakeLLM([call("get_price", part_id="P-1042B"), "Попробуйте позже."])
+    result = run_agent("Сколько стоит P-1042B?", llm, {"get_price": price})
+    assert price.call_count == 3 and result.steps[0].error
+    assert "Данные ERP получить не удалось" in result.answer

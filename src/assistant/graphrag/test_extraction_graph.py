@@ -3,7 +3,8 @@ import json
 import pytest
 
 from assistant.graphrag.extraction import extract_chunk
-from assistant.infra.schemas import Chunk, Entity
+from assistant.graphrag.graph_builder import build_graph
+from assistant.infra.schemas import Chunk, Entity, ExtractionResult, Relation
 from assistant.infra.testing import FakeLLM
 
 
@@ -101,3 +102,42 @@ def test_invalid_relation_direction_is_filtered():
     result = extract_chunk(chunk, FakeLLM([response]))
     assert result.relations == []
     assert result.dropped == 1
+
+
+def test_repeated_chunk_does_not_increase_edge_weight():
+    old, new = Entity("Part", "P-1042"), Entity("Part", "P-1042B")
+    relation = Relation(old, "REPLACED_BY", new)
+    results = [ExtractionResult(f"a.md#{i}", "a.md", [old, new], [relation, relation]) for i in range(2)]
+    graph = build_graph([results[1], results[0], results[0]])
+    edge = graph.edges[old.node_id, new.node_id]
+    assert edge["weight"] == 2
+    assert edge["sources"] == ["a.md#0", "a.md#1"]
+    assert graph.nodes[old.node_id]["sources"] == edge["sources"]
+
+
+def test_conflicts_are_counted_once_regardless_of_input_order():
+    first, second, third = [Entity("Part", name) for name in ("P-2054", "P-2054B", "P-2054C")]
+    forward = Relation(first, "REPLACED_BY", second)
+    backward = Relation(second, "REPLACED_BY", first)
+    onward = Relation(second, "REPLACED_BY", third)
+    back = Relation(third, "REPLACED_BY", second)
+    results = [
+        ExtractionResult("a.md#0", "a.md", [first, second, third], [forward, onward]),
+        ExtractionResult("b.md#0", "b.md", [first, second, third], [forward, back]),
+        ExtractionResult("c.md#0", "c.md", [first, second], [backward]),
+    ]
+    for ordered in (results, results[::-1]):
+        graph = build_graph(ordered)
+        assert set(graph.edges) == {(first.node_id, second.node_id)}
+        assert set(graph.nodes) == {first.node_id, second.node_id, third.node_id}
+        assert graph.graph["conflicts"] == 2
+
+
+def test_empty_graph_and_entities_without_relations_are_preserved():
+    empty = build_graph([])
+    assert len(empty) == 0
+    assert empty.graph["conflicts"] == 0
+    part = Entity("Part", "P-1042")
+    graph = build_graph([ExtractionResult("a.md#0", "a.md", [part])])
+    assert graph.nodes[part.node_id] == {"type": "Part", "name": "P-1042", "sources": ["a.md#0"]}
+    assert graph.number_of_edges() == 0

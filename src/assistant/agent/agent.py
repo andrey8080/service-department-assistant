@@ -4,7 +4,7 @@ import json
 from collections.abc import Callable
 
 from assistant.agent.tools import TOOL_SCHEMAS, validate_arguments
-from assistant.agent.verification import allowed_codes, requested_quantities
+from assistant.agent.verification import allowed_codes, requested_quantities, unsupported_facts
 from assistant.infra.erp_client import ErpNotFound, ErpRejected, ErpUnavailable
 from assistant.infra.llm import LLMClient, tool_message
 from assistant.infra.schemas import AgentResult, ToolStep
@@ -51,9 +51,13 @@ def run_agent(
     sources: set[str] = set()
     results: list[tuple[str, dict]] = []
     cache: dict[str, dict] = {}
+    corrections = 0
     erp_failed = False
 
     def finish(text: str, **kwargs) -> AgentResult:
+        if unsupported_facts(text, question, results):
+            text = REFUSAL
+            kwargs["refused"] = True
         return AgentResult(text, steps=list(steps), sources=sorted(sources), **kwargs)
 
     while len(steps) < max_steps:
@@ -61,6 +65,20 @@ def run_agent(
         messages.append(response.as_message())
         if not response.tool_calls:
             text = response.content.strip()
+            if unsupported_facts(text, question, results):
+                if corrections:
+                    return finish(REFUSAL, refused=True)
+                corrections += 1
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": (
+                            "В ответе есть неподтверждённый код, цена или остаток. Исправь ответ только по "
+                            "вопросу и результатам инструментов. Если данных нет, откажись."
+                        ),
+                    }
+                )
+                continue
             if erp_failed and "erp" not in text.lower() and "учётн" not in text.lower():
                 text += " Данные ERP получить не удалось."
             created = [
@@ -75,6 +93,8 @@ def run_agent(
                     text += " В базе знаний не найдено."
             if results and all(value.get("refused", False) for _, value in results):
                 no_data = True
+                if "в базе знаний не найдено" not in text.lower():
+                    text = REFUSAL
             return finish(text or REFUSAL, refused=no_data or not text)
 
         for call in response.tool_calls:
@@ -136,4 +156,7 @@ def run_agent(
     text = _observations(results)
     if erp_failed:
         text += " Данные ERP получить не удалось."
-    return finish((text + " Работа прервана: достигнут лимит шагов.").strip())
+    no_data = bool(results) and all(value.get("refused", False) for _, value in results)
+    if no_data and "в базе знаний не найдено" not in text.lower():
+        text += " " + REFUSAL
+    return finish((text + " Работа прервана: достигнут лимит шагов.").strip(), refused=no_data)

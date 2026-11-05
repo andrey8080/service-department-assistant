@@ -4,8 +4,8 @@ import networkx as nx
 import pytest
 
 from assistant.graphrag.communities import detect_communities, summarize_community
-from assistant.graphrag.search import local_search
-from assistant.infra.schemas import Community, KnowledgeBase
+from assistant.graphrag.search import global_search, local_search
+from assistant.infra.schemas import MAP_SCHEMA, Community, KnowledgeBase
 from assistant.infra.testing import FakeLLM
 
 
@@ -200,6 +200,79 @@ def test_local_search_marks_empty_answers_and_model_refusals(response):
     connect(graph, "Part:P-1042", "IS_A", "Component:пусковое реле")
 
     answer = local_search("Как ремонтировать P-1042?", KnowledgeBase(graph, [], {}), FakeLLM([response]))
+
+    assert answer.refused
+    assert "В базе знаний не найдено" in answer.text
+
+
+@pytest.mark.parametrize(
+    "partial",
+    [
+        "это не JSON",
+        '{"answer": "ответ", "score": 11}',
+        '{"answer": "ответ", "score": -1}',
+        '{"answer": 7, "score": 5}',
+        '{"answer": "ответ", "score": "5"}',
+        '{"answer": "ответ", "score": true}',
+        '{"answer": "ответ"}',
+        '{"answer": " ", "score": 5}',
+        '{"answer": "ответ", "score": 0}',
+    ],
+)
+def test_global_search_skips_invalid_or_useless_partial_answers(partial):
+    kb = KnowledgeBase(nx.DiGraph(), [Community(0, [], "Сводка")], {})
+    llm = FakeLLM([partial])
+
+    answer = global_search("Обзор неисправностей", kb, llm)
+
+    assert answer.refused and not answer.sources
+    assert len(llm.requests) == 1
+    assert llm.requests[0]["json_schema"] == MAP_SCHEMA
+
+
+def test_global_search_cites_only_useful_communities_and_deduplicates_documents():
+    graph = nx.DiGraph()
+    connect(graph, "Model:AR-210", "FAILED", "Component:пусковое реле", source="arctic.md#1")
+    connect(graph, "Model:AR-210", "BELONGS_TO", "ProductLine:Арктика", source="arctic.md#2")
+    connect(graph, "Model:BZ-310", "FAILED", "Component:компрессор", source="unrelated.md#0")
+    communities = [
+        Community(0, ["Model:AR-210", "Component:пусковое реле", "ProductLine:Арктика"], "Отказы Арктики"),
+        Community(1, ["Model:BZ-310", "Component:компрессор"], "Отказы другой линейки"),
+        Community(2, [], " "),
+    ]
+    llm = FakeLLM(
+        [
+            '{"answer": "Пусковое реле: 37 отказов.", "score": 8}',
+            '{"answer": "НЕ НУЖНО", "score": 0}',
+            "У пускового реле 37 отказов.",
+        ]
+    )
+
+    answer = global_search("Что ломается в Арктике?", KnowledgeBase(graph, communities, {}), llm)
+
+    assert not answer.refused and answer.sources == ["arctic.md"]
+    assert len(llm.requests) == 3
+    assert all(request["json_schema"] == MAP_SCHEMA for request in llm.requests[:2])
+    merged = llm.requests[-1]["messages"][-1]["content"]
+    assert "Пусковое реле: 37 отказов." in merged
+    assert "НЕ НУЖНО" not in merged
+
+
+@pytest.mark.parametrize("communities", [[], [Community(0, [], " ")]])
+def test_global_search_without_summaries_refuses_without_calling_model(communities):
+    llm = FakeLLM([])
+
+    answer = global_search("Обзор", KnowledgeBase(nx.DiGraph(), communities, {}), llm)
+
+    assert answer.refused and not llm.requests
+
+
+@pytest.mark.parametrize("response", ["", "В базе знаний не найдено нужных сведений."])
+def test_global_search_marks_empty_final_answer_and_model_refusal(response):
+    kb = KnowledgeBase(nx.DiGraph(), [Community(0, [], "Известны отказы реле")], {})
+    llm = FakeLLM(['{"answer": "Отказывает реле.", "score": 2}', response])
+
+    answer = global_search("Что ломается?", kb, llm)
 
     assert answer.refused
     assert "В базе знаний не найдено" in answer.text

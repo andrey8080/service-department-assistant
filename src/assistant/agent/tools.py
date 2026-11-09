@@ -30,7 +30,9 @@ class _Question(_Arguments):
 
 
 class _Part(_Arguments):
-    part_id: StrictStr
+    part_id: StrictStr = Field(
+        description="Номер детали P-… из вопроса или фактов поиска; код оборудования не подходит."
+    )
 
     @field_validator("part_id")
     @classmethod

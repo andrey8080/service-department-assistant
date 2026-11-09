@@ -1,20 +1,73 @@
 from unittest.mock import Mock
 
 import pytest
+from fastapi.testclient import TestClient
 
 from assistant.agent.agent import run_agent
 from assistant.agent.tools import build_tools, validate_arguments
 from assistant.agent.verification import requested_quantities, unsupported_facts
-from assistant.infra.erp_client import ErpNotFound, ErpRejected, ErpUnavailable
+from assistant.graphrag.graph_builder import build_graph
+from assistant.infra.erp_client import ErpClient, ErpNotFound, ErpRejected, ErpUnavailable
 from assistant.infra.llm import LLMResponse, ToolCall
-from assistant.infra.schemas import Answer
+from assistant.infra.schemas import Answer, Entity, ExtractionResult, KnowledgeBase, Relation
 from assistant.infra.testing import FakeLLM
+from erp.app import create_app
 
 ORDER = {"part_id": "P-1042B", "warehouse": "Казань", "qty": 2, "model": "AR-210"}
 
 
 def call(name, **arguments):
     return LLMResponse("", [ToolCall("test-call", name, arguments)])
+
+
+def test_agent_recovers_after_model_code_is_used_as_part_id():
+    model, old, new, component, error = [
+        Entity(kind, name)
+        for kind, name in [
+            ("Model", "AR-210"),
+            ("Part", "P-1042"),
+            ("Part", "P-1042B"),
+            ("Component", "пусковое реле"),
+            ("ErrorCode", "E-17"),
+        ]
+    ]
+    graph = build_graph(
+        [
+            ExtractionResult(
+                "manual.md#0",
+                "manual.md",
+                relations=[
+                    Relation(model, "HAS_PART", old),
+                    Relation(old, "IS_A", component),
+                    Relation(error, "INDICATES", component),
+                ],
+            ),
+            ExtractionResult("bulletin.md#0", "bulletin.md", relations=[Relation(old, "REPLACED_BY", new)]),
+        ]
+    )
+    kb = KnowledgeBase(graph, [], {"Component": [component.name]})
+    question = "Ошибка E-17 на AR-210. Какую деталь заказать, есть ли она в Казани и сколько стоит?"
+    llm = FakeLLM(
+        [
+            call("search_knowledge", question=question),
+            "Пусковое реле P-1042 заменено на P-1042B.",
+            call("check_stock", part_id="AR-210", warehouse="Казань"),
+            call("check_stock", part_id="P-1042B", warehouse="Казань"),
+            call("get_price", part_id="P-1042B"),
+            "Закажите P-1042B: в Казани остаток 3 шт., цена 2630 руб.",
+        ]
+    )
+    with TestClient(create_app(fail_rate=0)) as http:
+        erp = ErpClient("http://testserver", http=http)
+        result = run_agent(question, llm, build_tools(kb, llm, erp))
+
+    assert not result.refused and not result.needs_confirmation
+    assert result.steps[1].error and "Некорректные аргументы" in result.steps[1].error
+    assert result.steps[2].result["qty"] == 3
+    assert result.steps[3].result["price_rub"] == 2630
+    assert "AR-210 -HAS_PART-> P-1042" in result.steps[0].result["facts"]
+    assert result.sources == ["bulletin.md", "manual.md"]
+    assert "P-1042B" in result.answer and "2630" in result.answer
 
 
 @pytest.mark.parametrize("qty", [True, 1.5, "2", 0, -1])

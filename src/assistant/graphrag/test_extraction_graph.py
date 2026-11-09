@@ -77,7 +77,7 @@ def test_dropped_counts_entities_and_relations_separately():
             ],
         }
     )
-    result = extract_chunk(chunk, FakeLLM([response]))
+    result = extract_chunk(chunk, FakeLLM([response, response]))
     assert result.entities == [Entity("Part", "P-1042")]
     assert result.relations == []
     assert result.dropped == 3
@@ -99,9 +99,109 @@ def test_invalid_relation_direction_is_filtered():
             ],
         }
     )
-    result = extract_chunk(chunk, FakeLLM([response]))
+    llm = FakeLLM([response, response])
+    result = extract_chunk(chunk, llm)
     assert result.relations == []
     assert result.dropped == 1
+    assert len(llm.requests) == 2
+
+
+ASSEMBLY = Chunk("manual.md#0", "manual.md", "# Витрина AR-210\n## Состав узлов\nПусковое реле — деталь P-1042.")
+
+
+def assembly_response(model_type="Model", include_part=True):
+    relations = [
+        {
+            "subject_type": "Part",
+            "subject": "P-1042",
+            "type": "IS_A",
+            "object_type": "Component",
+            "object": "пусковое реле",
+        }
+    ]
+    if include_part:
+        relations.append(
+            {
+                "subject_type": model_type,
+                "subject": "AR-210",
+                "type": "HAS_PART",
+                "object_type": "Part",
+                "object": "P-1042",
+            }
+        )
+    return json.dumps(
+        {"entities": [{"type": model_type, "name": "AR-210"}], "relations": relations}, ensure_ascii=False
+    )
+
+
+@pytest.mark.parametrize("bad", [assembly_response("ProductLine"), assembly_response(include_part=False)])
+def test_wrong_model_type_and_missing_installed_part_get_one_repair(bad):
+    llm = FakeLLM([bad, assembly_response()])
+
+    result = extract_chunk(ASSEMBLY, llm)
+    graph = build_graph([result])
+
+    assert graph.has_edge("Model:AR-210", "Part:P-1042")
+    assert graph.has_edge("Part:P-1042", "Component:пусковое реле")
+    assert "ProductLine:AR-210" not in graph
+    assert len(llm.requests) == 2 and result.dropped == 0
+
+
+@pytest.mark.parametrize("repair", ["не JSON", '{"entities": [], "relations": []}'])
+def test_broken_repair_keeps_valid_facts_from_first_response(repair):
+    llm = FakeLLM([assembly_response("ProductLine", include_part=False), repair])
+
+    result = extract_chunk(ASSEMBLY, llm)
+
+    assert len(result.relations) == 1
+    assert result.relations[0].type == "IS_A"
+    assert result.dropped == 1 and len(llm.requests) == 2
+
+
+def test_second_semantic_error_is_filtered_without_a_third_call():
+    response = assembly_response("ProductLine")
+    llm = FakeLLM([response, response])
+
+    result = extract_chunk(ASSEMBLY, llm)
+
+    assert [relation.type for relation in result.relations] == ["IS_A"]
+    assert result.dropped == 2 and len(llm.requests) == 2
+
+
+def test_repair_does_not_authorize_a_code_missing_from_the_document():
+    invented = assembly_response().replace("P-1042", "P-7777")
+    llm = FakeLLM([assembly_response(include_part=False), invented])
+
+    result = extract_chunk(ASSEMBLY, llm)
+
+    assert not result.relations
+    assert all(entity.name != "P-7777" for entity in result.entities)
+    assert result.dropped == 2 and len(llm.requests) == 2
+
+
+def test_model_name_with_equipment_prefix_keeps_failure_relation():
+    chunk = Chunk("report.md#0", "report.md", "Витрина АR-220: отказ узла пусковое реле.")
+    response = json.dumps(
+        {
+            "entities": [],
+            "relations": [
+                {
+                    "subject_type": "Model",
+                    "subject": "витрина АR-220",
+                    "type": "FAILED",
+                    "object_type": "Component",
+                    "object": "пусковое реле",
+                }
+            ],
+        },
+        ensure_ascii=False,
+    )
+    llm = FakeLLM([response])
+
+    result = extract_chunk(chunk, llm)
+
+    assert result.relations[0].subject == Entity("Model", "AR-220")
+    assert result.dropped == 0 and len(llm.requests) == 1
 
 
 def test_repeated_chunk_does_not_increase_edge_weight():

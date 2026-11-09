@@ -257,6 +257,116 @@ def test_supplier_is_not_requested_when_document_does_not_name_one():
     assert len(llm.requests) == 1
 
 
+def replacement_response(old, new):
+    return json.dumps(
+        {
+            "entities": [],
+            "relations": [
+                {"subject_type": "Part", "subject": old, "type": "REPLACED_BY", "object_type": "Part", "object": new},
+                {
+                    "subject_type": "Part",
+                    "subject": "P-4321",
+                    "type": "SUPPLIED_BY",
+                    "object_type": "Supplier",
+                    "object": "ТермоПрибор",
+                },
+            ],
+        },
+        ensure_ascii=False,
+    )
+
+
+REPLACEMENT = Chunk(
+    "notice.md#0",
+    "notice.md",
+    "Деталь P-9876C снята с производства. Вместо неё устанавливается деталь P-4321. "
+    "Поставщик P-4321 — ТермоПрибор.",
+)
+
+
+def test_reversed_replacement_is_normalized_from_the_original_document():
+    wrong = replacement_response("P-4321", "P-9876C")
+    llm = FakeLLM([wrong])
+
+    result = extract_chunk(REPLACEMENT, llm)
+
+    assert [(r.subject.name, r.object.name) for r in result.relations if r.type == "REPLACED_BY"] == [
+        ("P-9876C", "P-4321")
+    ]
+    assert len(llm.requests) == 1 and result.dropped == 0
+    assert REPLACEMENT.text == llm.requests[0]["messages"][1]["content"]
+
+
+def test_direction_normalization_preserves_other_facts():
+    llm = FakeLLM([replacement_response("P-4321", "P-9876C")])
+
+    result = extract_chunk(REPLACEMENT, llm)
+
+    assert [(r.subject.name, r.object.name) for r in result.relations if r.type == "SUPPLIED_BY"] == [
+        ("P-4321", "ТермоПрибор")
+    ]
+    assert result.dropped == 0 and len(llm.requests) == 1
+
+
+def test_correct_direction_is_kept_without_an_extra_call():
+    llm = FakeLLM([replacement_response("P-9876C", "P-4321")])
+
+    result = extract_chunk(REPLACEMENT, llm)
+
+    assert result.relations[0] == Relation(Entity("Part", "P-9876C"), "REPLACED_BY", Entity("Part", "P-4321"))
+    assert len(llm.requests) == 1 and result.dropped == 0
+
+
+def test_replacement_direction_uses_normalized_codes_and_not_the_suffix():
+    chunk = Chunk("notice.md#0", "notice.md", REPLACEMENT.text.replace("P-9876C", "р 9876с"))
+    llm = FakeLLM([replacement_response("P-4321", "P-9876C")])
+
+    result = extract_chunk(chunk, llm)
+
+    assert result.relations[0].subject.name == "P-9876C"
+    assert result.relations[0].object.name == "P-4321"
+    assert len(llm.requests) == 1
+
+
+def test_two_directions_from_the_model_become_one_source_confirmed_relation():
+    reply = json.loads(replacement_response("P-4321", "P-9876C"))
+    reply["relations"] += json.loads(replacement_response("P-9876C", "P-4321"))["relations"]
+    result = extract_chunk(REPLACEMENT, FakeLLM([json.dumps(reply, ensure_ascii=False)]))
+
+    replacements = [r for r in result.relations if r.type == "REPLACED_BY"]
+    assert replacements == [Relation(Entity("Part", "P-9876C"), "REPLACED_BY", Entity("Part", "P-4321"))]
+    assert len(result.relations) == 2
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Деталь P-9876C не снята с производства. Вместо неё на складе оказалась P-4321.",
+        "Деталь P-9876C снята с производства. Вместо неё не устанавливается P-4321.",
+        "Деталь P-9876C снята с производства. Вместо неё устанавливается P-4321 или P-9876D.",
+        "Детали P-9876C и P-4321 сняты с производства. Вместо них устанавливается P-9876D.",
+        "Деталь P-9876C снята с производства. Вместо неё устанавливается P-4321. "
+        "Деталь P-4321 снята с производства. Вместо неё устанавливается P-9876C.",
+    ],
+)
+def test_direction_check_does_not_resolve_ambiguous_or_contradictory_text(text):
+    llm = FakeLLM([replacement_response("P-4321", "P-9876C")])
+
+    result = extract_chunk(Chunk("notice.md#0", "notice.md", text), llm)
+
+    assert result.relations[0].type == "REPLACED_BY"
+    assert len(llm.requests) == 1
+
+
+def test_direction_check_never_adds_a_relation_missing_from_the_model_response():
+    llm = FakeLLM(['{"entities": [], "relations": []}'])
+
+    result = extract_chunk(REPLACEMENT, llm)
+
+    assert not result.relations and not result.entities
+    assert len(llm.requests) == 1
+
+
 def test_repeated_chunk_does_not_increase_edge_weight():
     old, new = Entity("Part", "P-1042"), Entity("Part", "P-1042B")
     relation = Relation(old, "REPLACED_BY", new)

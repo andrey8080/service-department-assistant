@@ -1,6 +1,7 @@
 """Извлечение сущностей и связей с проверкой по документу и словарю."""
 
 import json
+import re
 
 from pydantic import BaseModel, StrictStr, ValidationError, field_validator
 
@@ -57,6 +58,24 @@ class _Extraction(BaseModel):
     relations: list[_RelationRow]
 
 
+def _replacement_directions(text: str) -> set[tuple[str, str]]:
+    """Однозначные направления из фраз о снятии детали и её замене."""
+    sentences = [part.strip() for part in re.split(r"[.!?\n]+", text) if part.strip()]
+    pairs = set()
+    for old_text, new_text in zip(sentences, sentences[1:], strict=False):
+        if not re.search(r"\bснят[аоы]?\s+с\s+производства\b", old_text, re.I):
+            continue
+        if re.search(r"\bне\s+снят", old_text, re.I):
+            continue
+        if not re.match(r"вместо\s+(?:не[её]|него|них)\s+устанавлива(?:ется|ются)\b", new_text, re.I):
+            continue
+        old = [code for code in find_codes(old_text) if code_type(code) == "Part"]
+        new = [code for code in find_codes(new_text) if code_type(code) == "Part"]
+        if len(old) == len(new) == 1 and old != new:
+            pairs.add((old[0], new[0]))
+    return {(old, new) for old, new in pairs if (new, old) not in pairs}
+
+
 def _schema_issues(parsed: _Extraction, chunk: Chunk) -> list[str]:
     issues = []
     codes = {code: code_type(code) for code in find_codes(chunk.text)}
@@ -90,7 +109,7 @@ def _schema_issues(parsed: _Extraction, chunk: Chunk) -> list[str]:
 
 
 def extract_chunk(chunk: Chunk, llm: LLMClient) -> ExtractionResult:
-    """Извлекает факты моделью, затем проверяет их коды и словарные названия кодом."""
+    """Извлекает факты моделью, проверяет имена и уточняет направление явных замен по документу."""
     names = vocabulary()
     directions = "\n".join(f"{kind}: {start} -> {end}" for kind, (start, end) in RELATION_SIGNATURES.items())
     example = {
@@ -174,6 +193,7 @@ def extract_chunk(chunk: Chunk, llm: LLMClient) -> ExtractionResult:
         return result
 
     codes = set(find_codes(chunk.text))
+    replacements = _replacement_directions(chunk.text)
     entities: dict[str, Entity] = {}
 
     def checked(kind: str, raw: str) -> Entity | None:
@@ -201,6 +221,9 @@ def extract_chunk(chunk: Chunk, llm: LLMClient) -> ExtractionResult:
         if not relation.matches_schema():
             result.dropped += 1
             continue
+        if row.type == "REPLACED_BY" and (obj.name, subject.name) in replacements:
+            relation = Relation(obj, row.type, subject)
+            subject, obj = obj, subject
         key = (subject.node_id, row.type, obj.node_id)
         if key not in seen:
             result.relations.append(relation)

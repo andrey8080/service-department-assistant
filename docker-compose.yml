@@ -1,0 +1,45 @@
+# Сервисы ассистента. Файл остаётся как есть, настройки задаются в .env.
+services:
+  app:
+    build: .
+    env_file: .env
+    environment:
+      ERP_URL: http://erp:8100
+    volumes:
+      - ./src:/app/src
+      - ./tests:/app/tests
+      - ./data:/app/data:ro
+      - ./artifacts:/app/artifacts
+    ports:
+      - "8000:8000"
+    depends_on:
+      erp:
+        condition: service_healthy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  erp:
+    build: .
+    command: uvicorn erp.app:app --host 0.0.0.0 --port 8100
+    environment:
+      ERP_FAIL_RATE: ${ERP_FAIL_RATE:-0}
+    ports:
+      - "8100:8100"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8100/health')"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # Модельный сервер в контейнере. Нужен на Linux, особенно с видеокартой.
+  # На macOS контейнер не видит видеоускоритель: запускайте Ollama на самом компьютере, см. docs/setup.md.
+  llm:
+    image: ollama/ollama:0.15.4
+    profiles: ["local-llm"]
+    volumes:
+      - ollama:/root/.ollama
+    ports:
+      - "11434:11434"
+
+volumes:
+  ollama:

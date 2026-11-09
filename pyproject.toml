@@ -1,0 +1,36 @@
+[project]
+name = "assistant"
+version = "0.1.0"
+description = "Ассистент сервисной службы «ПолярТех»: стартовый репозиторий финального проекта"
+requires-python = ">=3.11,<3.13"
+dependencies = [
+    "fastapi==0.115.6",
+    "uvicorn==0.34.0",
+    "httpx>=0.27,<0.29",
+    "networkx>=3.2,<4",
+    "numpy>=1.26,<3",
+    "pydantic>=2.6,<3",
+]
+
+[dependency-groups]
+dev = ["pytest>=8,<9", "ruff>=0.6,<1"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/assistant"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests", "erp/tests"]
+pythonpath = ["."]
+filterwarnings = ["ignore::DeprecationWarning:starlette.*"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+extend-exclude = ["*.md"]  # форматтер не должен править код внутри документов
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]

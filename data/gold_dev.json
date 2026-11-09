@@ -1,0 +1,1124 @@
+{
+  "manual_AR-210.md": {
+    "entities": [
+      "Component:блок освещения",
+      "Component:вентилятор испарителя",
+      "Component:вентилятор конденсатора",
+      "Component:датчик температуры",
+      "Component:компрессор",
+      "Component:контроллер",
+      "Component:пусковое реле",
+      "Component:реле давления",
+      "ErrorCode:E-11",
+      "ErrorCode:E-12",
+      "ErrorCode:E-13",
+      "ErrorCode:E-14",
+      "ErrorCode:E-15",
+      "ErrorCode:E-16",
+      "ErrorCode:E-17",
+      "ErrorCode:E-18",
+      "ErrorCode:E-19",
+      "ErrorCode:E-24",
+      "Model:AR-210",
+      "Part:P-1010",
+      "Part:P-1014",
+      "Part:P-1018",
+      "Part:P-1022",
+      "Part:P-1026",
+      "Part:P-1042",
+      "Part:P-1046",
+      "Part:P-1050",
+      "ProductLine:Арктика",
+      "Supplier:АвтоматикаСевер",
+      "Supplier:ВентПром",
+      "Supplier:КомпрессорМаш",
+      "Supplier:ТермоПрибор",
+      "Supplier:ХолодКомплект"
+    ],
+    "relations": [
+      [
+        "Model:AR-210",
+        "BELONGS_TO",
+        "ProductLine:Арктика"
+      ],
+      [
+        "Model:AR-210",
+        "HAS_PART",
+        "Part:P-1010"
+      ],
+      [
+        "Part:P-1010",
+        "IS_A",
+        "Component:компрессор"
+      ],
+      [
+        "Part:P-1010",
+        "SUPPLIED_BY",
+        "Supplier:КомпрессорМаш"
+      ],
+      [
+        "Model:AR-210",
+        "HAS_PART",
+        "Part:P-1014"
+      ],
+      [
+        "Part:P-1014",
+        "IS_A",
+        "Component:вентилятор конденсатора"
+      ],
+      [
+        "Part:P-1014",
+        "SUPPLIED_BY",
+        "Supplier:ВентПром"
+      ],
+      [
+        "Model:AR-210",
+        "HAS_PART",
+        "Part:P-1018"
+      ],
+      [
+        "Part:P-1018",
+        "IS_A",
+        "Component:датчик температуры"
+      ],
+      [
+        "Part:P-1018",
+        "SUPPLIED_BY",
+        "Supplier:ТермоПрибор"
+      ],
+      [
+        "Model:AR-210",
+        "HAS_PART",
+        "Part:P-1022"
+      ],
+      [
+        "Part:P-1022",
+        "IS_A",
+        "Component:контроллер"
+      ],
+      [
+        "Part:P-1022",
+        "SUPPLIED_BY",
+        "Supplier:АвтоматикаСевер"
+      ],
+      [
+        "Model:AR-210",
+        "HAS_PART",
+        "Part:P-1026"
+      ],
+      [
+        "Part:P-1026",
+        "IS_A",
+        "Component:реле давления"
+      ],
+      [
+        "Part:P-1026",
+        "SUPPLIED_BY",
+        "Supplier:ХолодКомплект"
+      ],
+      [
+        "Model:AR-210",
+        "HAS_PART",
+        "Part:P-1042"
+      ],
+      [
+        "Part:P-1042",
+        "IS_A",
+        "Component:пусковое реле"
+      ],
+      [
+        "Part:P-1042",
+        "SUPPLIED_BY",
+        "Supplier:ХолодКомплект"
+      ],
+      [
+        "Model:AR-210",
+        "HAS_PART",
+        "Part:P-1046"
+      ],
+      [
+        "Part:P-1046",
+        "IS_A",
+        "Component:вентилятор испарителя"
+      ],
+      [
+        "Part:P-1046",
+        "SUPPLIED_BY",
+        "Supplier:ВентПром"
+      ],
+      [
+        "Model:AR-210",
+        "HAS_PART",
+        "Part:P-1050"
+      ],
+      [
+        "Part:P-1050",
+        "IS_A",
+        "Component:блок освещения"
+      ],
+      [
+        "Part:P-1050",
+        "SUPPLIED_BY",
+        "Supplier:АвтоматикаСевер"
+      ],
+      [
+        "ErrorCode:E-11",
+        "INDICATES",
+        "Component:компрессор"
+      ],
+      [
+        "ErrorCode:E-12",
+        "INDICATES",
+        "Component:компрессор"
+      ],
+      [
+        "ErrorCode:E-13",
+        "INDICATES",
+        "Component:вентилятор конденсатора"
+      ],
+      [
+        "ErrorCode:E-14",
+        "INDICATES",
+        "Component:датчик температуры"
+      ],
+      [
+        "ErrorCode:E-15",
+        "INDICATES",
+        "Component:контроллер"
+      ],
+      [
+        "ErrorCode:E-16",
+        "INDICATES",
+        "Component:реле давления"
+      ],
+      [
+        "ErrorCode:E-17",
+        "INDICATES",
+        "Component:пусковое реле"
+      ],
+      [
+        "ErrorCode:E-18",
+        "INDICATES",
+        "Component:вентилятор испарителя"
+      ],
+      [
+        "ErrorCode:E-19",
+        "INDICATES",
+        "Component:блок освещения"
+      ],
+      [
+        "ErrorCode:E-24",
+        "INDICATES",
+        "Component:контроллер"
+      ]
+    ],
+    "optional_relations": []
+  },
+  "manual_AR-310.md": {
+    "entities": [
+      "Component:блок освещения",
+      "Component:вентилятор испарителя",
+      "Component:вентилятор конденсатора",
+      "Component:датчик температуры",
+      "Component:компрессор",
+      "Component:контроллер",
+      "Component:пусковое реле",
+      "Component:реле давления",
+      "ErrorCode:E-11",
+      "ErrorCode:E-12",
+      "ErrorCode:E-13",
+      "ErrorCode:E-14",
+      "ErrorCode:E-15",
+      "ErrorCode:E-16",
+      "ErrorCode:E-17",
+      "ErrorCode:E-18",
+      "ErrorCode:E-19",
+      "ErrorCode:E-24",
+      "Model:AR-310",
+      "Part:P-1110",
+      "Part:P-1114",
+      "Part:P-1118",
+      "Part:P-1122",
+      "Part:P-1126",
+      "Part:P-1142",
+      "Part:P-1146",
+      "Part:P-1150",
+      "ProductLine:Арктика",
+      "Supplier:АвтоматикаСевер",
+      "Supplier:ВентПром",
+      "Supplier:КомпрессорМаш",
+      "Supplier:ТермоПрибор",
+      "Supplier:ХолодКомплект"
+    ],
+    "relations": [
+      [
+        "Model:AR-310",
+        "BELONGS_TO",
+        "ProductLine:Арктика"
+      ],
+      [
+        "Model:AR-310",
+        "HAS_PART",
+        "Part:P-1110"
+      ],
+      [
+        "Part:P-1110",
+        "IS_A",
+        "Component:компрессор"
+      ],
+      [
+        "Part:P-1110",
+        "SUPPLIED_BY",
+        "Supplier:КомпрессорМаш"
+      ],
+      [
+        "Model:AR-310",
+        "HAS_PART",
+        "Part:P-1114"
+      ],
+      [
+        "Part:P-1114",
+        "IS_A",
+        "Component:вентилятор конденсатора"
+      ],
+      [
+        "Part:P-1114",
+        "SUPPLIED_BY",
+        "Supplier:ВентПром"
+      ],
+      [
+        "Model:AR-310",
+        "HAS_PART",
+        "Part:P-1118"
+      ],
+      [
+        "Part:P-1118",
+        "IS_A",
+        "Component:датчик температуры"
+      ],
+      [
+        "Part:P-1118",
+        "SUPPLIED_BY",
+        "Supplier:ТермоПрибор"
+      ],
+      [
+        "Model:AR-310",
+        "HAS_PART",
+        "Part:P-1122"
+      ],
+      [
+        "Part:P-1122",
+        "IS_A",
+        "Component:контроллер"
+      ],
+      [
+        "Part:P-1122",
+        "SUPPLIED_BY",
+        "Supplier:АвтоматикаСевер"
+      ],
+      [
+        "Model:AR-310",
+        "HAS_PART",
+        "Part:P-1126"
+      ],
+      [
+        "Part:P-1126",
+        "IS_A",
+        "Component:реле давления"
+      ],
+      [
+        "Part:P-1126",
+        "SUPPLIED_BY",
+        "Supplier:ХолодКомплект"
+      ],
+      [
+        "Model:AR-310",
+        "HAS_PART",
+        "Part:P-1142"
+      ],
+      [
+        "Part:P-1142",
+        "IS_A",
+        "Component:пусковое реле"
+      ],
+      [
+        "Part:P-1142",
+        "SUPPLIED_BY",
+        "Supplier:ХолодКомплект"
+      ],
+      [
+        "Model:AR-310",
+        "HAS_PART",
+        "Part:P-1146"
+      ],
+      [
+        "Part:P-1146",
+        "IS_A",
+        "Component:вентилятор испарителя"
+      ],
+      [
+        "Part:P-1146",
+        "SUPPLIED_BY",
+        "Supplier:ВентПром"
+      ],
+      [
+        "Model:AR-310",
+        "HAS_PART",
+        "Part:P-1150"
+      ],
+      [
+        "Part:P-1150",
+        "IS_A",
+        "Component:блок освещения"
+      ],
+      [
+        "Part:P-1150",
+        "SUPPLIED_BY",
+        "Supplier:АвтоматикаСевер"
+      ],
+      [
+        "ErrorCode:E-11",
+        "INDICATES",
+        "Component:компрессор"
+      ],
+      [
+        "ErrorCode:E-12",
+        "INDICATES",
+        "Component:компрессор"
+      ],
+      [
+        "ErrorCode:E-13",
+        "INDICATES",
+        "Component:вентилятор конденсатора"
+      ],
+      [
+        "ErrorCode:E-14",
+        "INDICATES",
+        "Component:датчик температуры"
+      ],
+      [
+        "ErrorCode:E-15",
+        "INDICATES",
+        "Component:контроллер"
+      ],
+      [
+        "ErrorCode:E-16",
+        "INDICATES",
+        "Component:реле давления"
+      ],
+      [
+        "ErrorCode:E-17",
+        "INDICATES",
+        "Component:пусковое реле"
+      ],
+      [
+        "ErrorCode:E-18",
+        "INDICATES",
+        "Component:вентилятор испарителя"
+      ],
+      [
+        "ErrorCode:E-19",
+        "INDICATES",
+        "Component:блок освещения"
+      ],
+      [
+        "ErrorCode:E-24",
+        "INDICATES",
+        "Component:контроллер"
+      ]
+    ],
+    "optional_relations": []
+  },
+  "manual_BZ-110.md": {
+    "entities": [
+      "Component:вентилятор испарителя",
+      "Component:вентилятор конденсатора",
+      "Component:датчик температуры",
+      "Component:компрессор",
+      "Component:контроллер",
+      "Component:нагреватель оттайки",
+      "Component:реле давления",
+      "Component:терморегулирующий вентиль",
+      "ErrorCode:E-11",
+      "ErrorCode:E-12",
+      "ErrorCode:E-13",
+      "ErrorCode:E-14",
+      "ErrorCode:E-15",
+      "ErrorCode:E-16",
+      "ErrorCode:E-18",
+      "ErrorCode:E-20",
+      "ErrorCode:E-21",
+      "ErrorCode:E-24",
+      "Model:BZ-110",
+      "Part:P-2010",
+      "Part:P-2014",
+      "Part:P-2018",
+      "Part:P-2022",
+      "Part:P-2026",
+      "Part:P-2046",
+      "Part:P-2054",
+      "Part:P-2058",
+      "ProductLine:Бриз",
+      "Supplier:АвтоматикаСевер",
+      "Supplier:ВентПром",
+      "Supplier:КомпрессорМаш",
+      "Supplier:ТермоПрибор",
+      "Supplier:ХолодКомплект"
+    ],
+    "relations": [
+      [
+        "Model:BZ-110",
+        "BELONGS_TO",
+        "ProductLine:Бриз"
+      ],
+      [
+        "Model:BZ-110",
+        "HAS_PART",
+        "Part:P-2010"
+      ],
+      [
+        "Part:P-2010",
+        "IS_A",
+        "Component:компрессор"
+      ],
+      [
+        "Part:P-2010",
+        "SUPPLIED_BY",
+        "Supplier:КомпрессорМаш"
+      ],
+      [
+        "Model:BZ-110",
+        "HAS_PART",
+        "Part:P-2014"
+      ],
+      [
+        "Part:P-2014",
+        "IS_A",
+        "Component:вентилятор конденсатора"
+      ],
+      [
+        "Part:P-2014",
+        "SUPPLIED_BY",
+        "Supplier:ВентПром"
+      ],
+      [
+        "Model:BZ-110",
+        "HAS_PART",
+        "Part:P-2018"
+      ],
+      [
+        "Part:P-2018",
+        "IS_A",
+        "Component:датчик температуры"
+      ],
+      [
+        "Part:P-2018",
+        "SUPPLIED_BY",
+        "Supplier:ТермоПрибор"
+      ],
+      [
+        "Model:BZ-110",
+        "HAS_PART",
+        "Part:P-2022"
+      ],
+      [
+        "Part:P-2022",
+        "IS_A",
+        "Component:контроллер"
+      ],
+      [
+        "Part:P-2022",
+        "SUPPLIED_BY",
+        "Supplier:АвтоматикаСевер"
+      ],
+      [
+        "Model:BZ-110",
+        "HAS_PART",
+        "Part:P-2026"
+      ],
+      [
+        "Part:P-2026",
+        "IS_A",
+        "Component:реле давления"
+      ],
+      [
+        "Part:P-2026",
+        "SUPPLIED_BY",
+        "Supplier:ХолодКомплект"
+      ],
+      [
+        "Model:BZ-110",
+        "HAS_PART",
+        "Part:P-2046"
+      ],
+      [
+        "Part:P-2046",
+        "IS_A",
+        "Component:вентилятор испарителя"
+      ],
+      [
+        "Part:P-2046",
+        "SUPPLIED_BY",
+        "Supplier:ВентПром"
+      ],
+      [
+        "Model:BZ-110",
+        "HAS_PART",
+        "Part:P-2054"
+      ],
+      [
+        "Part:P-2054",
+        "IS_A",
+        "Component:нагреватель оттайки"
+      ],
+      [
+        "Part:P-2054",
+        "SUPPLIED_BY",
+        "Supplier:ТермоПрибор"
+      ],
+      [
+        "Model:BZ-110",
+        "HAS_PART",
+        "Part:P-2058"
+      ],
+      [
+        "Part:P-2058",
+        "IS_A",
+        "Component:терморегулирующий вентиль"
+      ],
+      [
+        "Part:P-2058",
+        "SUPPLIED_BY",
+        "Supplier:ТермоПрибор"
+      ],
+      [
+        "ErrorCode:E-11",
+        "INDICATES",
+        "Component:компрессор"
+      ],
+      [
+        "ErrorCode:E-12",
+        "INDICATES",
+        "Component:компрессор"
+      ],
+      [
+        "ErrorCode:E-13",
+        "INDICATES",
+        "Component:вентилятор конденсатора"
+      ],
+      [
+        "ErrorCode:E-14",
+        "INDICATES",
+        "Component:датчик температуры"
+      ],
+      [
+        "ErrorCode:E-15",
+        "INDICATES",
+        "Component:контроллер"
+      ],
+      [
+        "ErrorCode:E-16",
+        "INDICATES",
+        "Component:реле давления"
+      ],
+      [
+        "ErrorCode:E-18",
+        "INDICATES",
+        "Component:вентилятор испарителя"
+      ],
+      [
+        "ErrorCode:E-20",
+        "INDICATES",
+        "Component:нагреватель оттайки"
+      ],
+      [
+        "ErrorCode:E-21",
+        "INDICATES",
+        "Component:терморегулирующий вентиль"
+      ],
+      [
+        "ErrorCode:E-24",
+        "INDICATES",
+        "Component:контроллер"
+      ]
+    ],
+    "optional_relations": []
+  },
+  "manual_GS-410.md": {
+    "entities": [
+      "Component:вентилятор конденсатора",
+      "Component:датчик температуры",
+      "Component:компрессор",
+      "Component:контроллер",
+      "Component:реле давления",
+      "Component:реле протока",
+      "Component:терморегулирующий вентиль",
+      "Component:циркуляционный насос",
+      "ErrorCode:E-11",
+      "ErrorCode:E-12",
+      "ErrorCode:E-13",
+      "ErrorCode:E-14",
+      "ErrorCode:E-15",
+      "ErrorCode:E-16",
+      "ErrorCode:E-21",
+      "ErrorCode:E-22",
+      "ErrorCode:E-23",
+      "ErrorCode:E-24",
+      "Model:GS-410",
+      "Part:P-3010",
+      "Part:P-3014",
+      "Part:P-3018",
+      "Part:P-3022",
+      "Part:P-3026",
+      "Part:P-3058",
+      "Part:P-3062",
+      "Part:P-3066",
+      "ProductLine:Гольфстрим",
+      "Supplier:АвтоматикаСевер",
+      "Supplier:ВентПром",
+      "Supplier:ГидроТех",
+      "Supplier:КомпрессорМаш",
+      "Supplier:ТермоПрибор",
+      "Supplier:ХолодКомплект"
+    ],
+    "relations": [
+      [
+        "Model:GS-410",
+        "BELONGS_TO",
+        "ProductLine:Гольфстрим"
+      ],
+      [
+        "Model:GS-410",
+        "HAS_PART",
+        "Part:P-3010"
+      ],
+      [
+        "Part:P-3010",
+        "IS_A",
+        "Component:компрессор"
+      ],
+      [
+        "Part:P-3010",
+        "SUPPLIED_BY",
+        "Supplier:КомпрессорМаш"
+      ],
+      [
+        "Model:GS-410",
+        "HAS_PART",
+        "Part:P-3014"
+      ],
+      [
+        "Part:P-3014",
+        "IS_A",
+        "Component:вентилятор конденсатора"
+      ],
+      [
+        "Part:P-3014",
+        "SUPPLIED_BY",
+        "Supplier:ВентПром"
+      ],
+      [
+        "Model:GS-410",
+        "HAS_PART",
+        "Part:P-3018"
+      ],
+      [
+        "Part:P-3018",
+        "IS_A",
+        "Component:датчик температуры"
+      ],
+      [
+        "Part:P-3018",
+        "SUPPLIED_BY",
+        "Supplier:ТермоПрибор"
+      ],
+      [
+        "Model:GS-410",
+        "HAS_PART",
+        "Part:P-3022"
+      ],
+      [
+        "Part:P-3022",
+        "IS_A",
+        "Component:контроллер"
+      ],
+      [
+        "Part:P-3022",
+        "SUPPLIED_BY",
+        "Supplier:АвтоматикаСевер"
+      ],
+      [
+        "Model:GS-410",
+        "HAS_PART",
+        "Part:P-3026"
+      ],
+      [
+        "Part:P-3026",
+        "IS_A",
+        "Component:реле давления"
+      ],
+      [
+        "Part:P-3026",
+        "SUPPLIED_BY",
+        "Supplier:ХолодКомплект"
+      ],
+      [
+        "Model:GS-410",
+        "HAS_PART",
+        "Part:P-3062"
+      ],
+      [
+        "Part:P-3062",
+        "IS_A",
+        "Component:циркуляционный насос"
+      ],
+      [
+        "Part:P-3062",
+        "SUPPLIED_BY",
+        "Supplier:ГидроТех"
+      ],
+      [
+        "Model:GS-410",
+        "HAS_PART",
+        "Part:P-3058"
+      ],
+      [
+        "Part:P-3058",
+        "IS_A",
+        "Component:терморегулирующий вентиль"
+      ],
+      [
+        "Part:P-3058",
+        "SUPPLIED_BY",
+        "Supplier:ТермоПрибор"
+      ],
+      [
+        "Model:GS-410",
+        "HAS_PART",
+        "Part:P-3066"
+      ],
+      [
+        "Part:P-3066",
+        "IS_A",
+        "Component:реле протока"
+      ],
+      [
+        "Part:P-3066",
+        "SUPPLIED_BY",
+        "Supplier:ХолодКомплект"
+      ],
+      [
+        "ErrorCode:E-11",
+        "INDICATES",
+        "Component:компрессор"
+      ],
+      [
+        "ErrorCode:E-12",
+        "INDICATES",
+        "Component:компрессор"
+      ],
+      [
+        "ErrorCode:E-13",
+        "INDICATES",
+        "Component:вентилятор конденсатора"
+      ],
+      [
+        "ErrorCode:E-14",
+        "INDICATES",
+        "Component:датчик температуры"
+      ],
+      [
+        "ErrorCode:E-15",
+        "INDICATES",
+        "Component:контроллер"
+      ],
+      [
+        "ErrorCode:E-16",
+        "INDICATES",
+        "Component:реле давления"
+      ],
+      [
+        "ErrorCode:E-21",
+        "INDICATES",
+        "Component:терморегулирующий вентиль"
+      ],
+      [
+        "ErrorCode:E-22",
+        "INDICATES",
+        "Component:циркуляционный насос"
+      ],
+      [
+        "ErrorCode:E-23",
+        "INDICATES",
+        "Component:реле протока"
+      ],
+      [
+        "ErrorCode:E-24",
+        "INDICATES",
+        "Component:контроллер"
+      ]
+    ],
+    "optional_relations": []
+  },
+  "bulletin_SB-2025-03.md": {
+    "entities": [
+      "Component:пусковое реле",
+      "Part:P-1042",
+      "Part:P-1042B",
+      "Supplier:ХолодКомплект"
+    ],
+    "relations": [
+      [
+        "Part:P-1042",
+        "REPLACED_BY",
+        "Part:P-1042B"
+      ],
+      [
+        "Part:P-1042",
+        "IS_A",
+        "Component:пусковое реле"
+      ],
+      [
+        "Part:P-1042B",
+        "SUPPLIED_BY",
+        "Supplier:ХолодКомплект"
+      ]
+    ],
+    "optional_relations": [
+      [
+        "Part:P-1042B",
+        "IS_A",
+        "Component:пусковое реле"
+      ]
+    ]
+  },
+  "bulletin_SB-2025-04.md": {
+    "entities": [
+      "Component:нагреватель оттайки",
+      "Part:P-2054",
+      "Part:P-2054B",
+      "Supplier:ТермоПрибор"
+    ],
+    "relations": [
+      [
+        "Part:P-2054",
+        "REPLACED_BY",
+        "Part:P-2054B"
+      ],
+      [
+        "Part:P-2054",
+        "IS_A",
+        "Component:нагреватель оттайки"
+      ],
+      [
+        "Part:P-2054B",
+        "SUPPLIED_BY",
+        "Supplier:ТермоПрибор"
+      ]
+    ],
+    "optional_relations": [
+      [
+        "Part:P-2054B",
+        "IS_A",
+        "Component:нагреватель оттайки"
+      ]
+    ]
+  },
+  "bulletin_SB-2025-08.md": {
+    "entities": [
+      "Component:нагреватель оттайки",
+      "Part:P-2054B",
+      "Part:P-2054C",
+      "Supplier:ТермоПрибор"
+    ],
+    "relations": [
+      [
+        "Part:P-2054B",
+        "REPLACED_BY",
+        "Part:P-2054C"
+      ],
+      [
+        "Part:P-2054B",
+        "IS_A",
+        "Component:нагреватель оттайки"
+      ],
+      [
+        "Part:P-2054C",
+        "SUPPLIED_BY",
+        "Supplier:ТермоПрибор"
+      ]
+    ],
+    "optional_relations": [
+      [
+        "Part:P-2054C",
+        "IS_A",
+        "Component:нагреватель оттайки"
+      ]
+    ]
+  },
+  "bulletin_SB-2025-10.md": {
+    "entities": [
+      "Component:вентилятор конденсатора",
+      "Part:P-1014",
+      "Supplier:ВентПром"
+    ],
+    "relations": [
+      [
+        "Part:P-1014",
+        "IS_A",
+        "Component:вентилятор конденсатора"
+      ],
+      [
+        "Part:P-1014",
+        "SUPPLIED_BY",
+        "Supplier:ВентПром"
+      ]
+    ],
+    "optional_relations": []
+  },
+  "procedure_SP-101.md": {
+    "entities": [
+      "Component:компрессор",
+      "ErrorCode:E-11",
+      "Procedure:SP-101"
+    ],
+    "relations": [
+      [
+        "ErrorCode:E-11",
+        "FIXED_BY",
+        "Procedure:SP-101"
+      ],
+      [
+        "ErrorCode:E-11",
+        "INDICATES",
+        "Component:компрессор"
+      ]
+    ],
+    "optional_relations": []
+  },
+  "procedure_SP-104.md": {
+    "entities": [
+      "Component:пусковое реле",
+      "ErrorCode:E-17",
+      "Procedure:SP-104"
+    ],
+    "relations": [
+      [
+        "ErrorCode:E-17",
+        "FIXED_BY",
+        "Procedure:SP-104"
+      ],
+      [
+        "ErrorCode:E-17",
+        "INDICATES",
+        "Component:пусковое реле"
+      ]
+    ],
+    "optional_relations": []
+  },
+  "procedure_SP-112.md": {
+    "entities": [
+      "Component:циркуляционный насос",
+      "ErrorCode:E-22",
+      "Procedure:SP-112"
+    ],
+    "relations": [
+      [
+        "ErrorCode:E-22",
+        "FIXED_BY",
+        "Procedure:SP-112"
+      ],
+      [
+        "ErrorCode:E-22",
+        "INDICATES",
+        "Component:циркуляционный насос"
+      ]
+    ],
+    "optional_relations": []
+  },
+  "procedure_SP-115.md": {
+    "entities": [],
+    "relations": [],
+    "optional_relations": []
+  },
+  "report_R-2025-001.md": {
+    "entities": [
+      "Component:датчик температуры",
+      "Model:AR-220"
+    ],
+    "relations": [
+      [
+        "Model:AR-220",
+        "FAILED",
+        "Component:датчик температуры"
+      ]
+    ],
+    "optional_relations": [
+      [
+        "ErrorCode:E-14",
+        "INDICATES",
+        "Component:датчик температуры"
+      ]
+    ]
+  },
+  "report_R-2025-002.md": {
+    "entities": [
+      "Component:реле давления",
+      "Model:GS-510"
+    ],
+    "relations": [
+      [
+        "Model:GS-510",
+        "FAILED",
+        "Component:реле давления"
+      ]
+    ],
+    "optional_relations": [
+      [
+        "ErrorCode:E-16",
+        "INDICATES",
+        "Component:реле давления"
+      ]
+    ]
+  },
+  "report_R-2025-003.md": {
+    "entities": [
+      "Component:пусковое реле",
+      "Model:AR-320"
+    ],
+    "relations": [
+      [
+        "Model:AR-320",
+        "FAILED",
+        "Component:пусковое реле"
+      ]
+    ],
+    "optional_relations": [
+      [
+        "ErrorCode:E-17",
+        "INDICATES",
+        "Component:пусковое реле"
+      ]
+    ]
+  },
+  "report_R-2025-004.md": {
+    "entities": [
+      "Component:нагреватель оттайки",
+      "Model:BZ-120"
+    ],
+    "relations": [
+      [
+        "Model:BZ-120",
+        "FAILED",
+        "Component:нагреватель оттайки"
+      ]
+    ],
+    "optional_relations": [
+      [
+        "ErrorCode:E-20",
+        "INDICATES",
+        "Component:нагреватель оттайки"
+      ]
+    ]
+  }
+}

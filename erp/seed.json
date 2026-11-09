@@ -1,0 +1,1494 @@
+{
+  "warehouses": [
+    "Москва",
+    "Санкт-Петербург",
+    "Казань",
+    "Новосибирск"
+  ],
+  "parts": [
+    {
+      "part_id": "P-1010",
+      "name": "компрессор",
+      "price_rub": 58630,
+      "discontinued": false
+    },
+    {
+      "part_id": "P-1014",
+      "name": "вентилятор конденсатора",
+      "price_rub": 7910,
+      "discontinued": false
+    },
+    {
+      "part_id": "P-1018",
+      "name": "датчик температуры",
+      "price_rub": 1490,
+      "discontinued": false
+    },
+    {
+      "part_id": "P-1022",
+      "name": "контроллер",
+      "price_rub": 17910,
+      "discontinued": false
+    },
+    {
+      "part_id": "P-1026",
+      "name": "реле давления",
+      "price_rub": 4460,
+      "discontinued": false
+    },
+    {
+      "part_id": "P-1042",
+      "name": "пусковое реле",
+      "price_rub": 3460,
+      "discontinued": true
+    },
+    {
+      "part_id": "P-1042B",
+      "name": "пусковое реле",
+      "price_rub": 2630,
+      "discontinued": false
+    },
+    {
+      "part_id": "P-1046",
+      "name": "вентилятор испарителя",
+      "price_rub": 8090,
+      "discontinued": true
+    },
+    {
+      "part_id": "P-1046B",
+      "name": "вентилятор испарителя",
+      "price_rub": 8170,
+      "discontinued": false
+    },
+    {
+      "part_id": "P-1050",
+      "name": "блок освещения",
+      "price_rub": 5500,
+      "discontinued": false
+    },
+    {
+      "part_id": "P-1110",
+      "name": "компрессор",
+      "price_rub": 69470,
+      "discontinued": false
+    },
+    {
+      "part_id": "P-1114",
+      "name": "вентилятор конденсатора",
+      "price_rub": 9720,
+      "discontinued": false
+    },
+    {
+      "part_id": "P-1118",
+      "name": "датчик температуры",
+      "price_rub": 1910,
+      "discontinued": true
+    },
+    {
+      "part_id": "P-1118B",
+      "name": "датчик температуры",
+      "price_rub": 2080,
+      "discontinued": false
+    },
+    {
+      "part_id": "P-1122",
+      "name": "контроллер",
+      "price_rub": 18650,
+      "discontinued": false
+    },
+    {
+      "part_id": "P-1126",
+      "name": "реле давления",
+      "price_rub": 5580,
+      "discontinued": false
+    },
+    {
+      "part_id": "P-1142",
+      "name": "пусковое реле",
+      "price_rub": 3650,
+      "discontinued": false
+    },
+    {
+      "part_id": "P-1146",
+      "name": "вентилятор испарителя",
+      "price_rub": 10730,
+      "discontinued": false
+    },
+    {
+      "part_id": "P-1150",
+      "name": "блок освещения",
+      "price_rub": 4960,
+      "discontinued": false
+    },
+    {
+      "part_id": "P-2010",
+      "name": "компрессор",
+      "price_rub": 71830,
+      "discontinued": false
+    },
+    {
+      "part_id": "P-2014",
+      "name": "вентилятор конденсатора",
+      "price_rub": 10580,
+      "discontinued": false
+    },
+    {
+      "part_id": "P-2018",
+      "name": "датчик температуры",
+      "price_rub": 1990,
+      "discontinued": false
+    },
+    {
+      "part_id": "P-2022",
+      "name": "контроллер",
+      "price_rub": 17210,
+      "discontinued": false
+    },
+    {
+      "part_id": "P-2026",
+      "name": "реле давления",
+      "price_rub": 3840,
+      "discontinued": false
+    },
+    {
+      "part_id": "P-2046",
+      "name": "вентилятор испарителя",
+      "price_rub": 9850,
+      "discontinued": false
+    },
+    {
+      "part_id": "P-2054",
+      "name": "нагреватель оттайки",
+      "price_rub": 5340,
+      "discontinued": true
+    },
+    {
+      "part_id": "P-2054B",
+      "name": "нагреватель оттайки",
+      "price_rub": 7130,
+      "discontinued": true
+    },
+    {
+      "part_id": "P-2054C",
+      "name": "нагреватель оттайки",
+      "price_rub": 6750,
+      "discontinued": false
+    },
+    {
+      "part_id": "P-2058",
+      "name": "терморегулирующий вентиль",
+      "price_rub": 10900,
+      "discontinued": false
+    },
+    {
+      "part_id": "P-2110",
+      "name": "компрессор",
+      "price_rub": 63130,
+      "discontinued": true
+    },
+    {
+      "part_id": "P-2110B",
+      "name": "компрессор",
+      "price_rub": 49710,
+      "discontinued": false
+    },
+    {
+      "part_id": "P-2114",
+      "name": "вентилятор конденсатора",
+      "price_rub": 10020,
+      "discontinued": false
+    },
+    {
+      "part_id": "P-2118",
+      "name": "датчик температуры",
+      "price_rub": 1480,
+      "discontinued": false
+    },
+    {
+      "part_id": "P-2122",
+      "name": "контроллер",
+      "price_rub": 17630,
+      "discontinued": false
+    },
+    {
+      "part_id": "P-2126",
+      "name": "реле давления",
+      "price_rub": 3730,
+      "discontinued": false
+    },
+    {
+      "part_id": "P-2146",
+      "name": "вентилятор испарителя",
+      "price_rub": 7390,
+      "discontinued": false
+    },
+    {
+      "part_id": "P-2154",
+      "name": "нагреватель оттайки",
+      "price_rub": 6440,
+      "discontinued": false
+    },
+    {
+      "part_id": "P-2158",
+      "name": "терморегулирующий вентиль",
+      "price_rub": 10060,
+      "discontinued": false
+    },
+    {
+      "part_id": "P-3010",
+      "name": "компрессор",
+      "price_rub": 67300,
+      "discontinued": false
+    },
+    {
+      "part_id": "P-3014",
+      "name": "вентилятор конденсатора",
+      "price_rub": 8130,
+      "discontinued": false
+    },
+    {
+      "part_id": "P-3018",
+      "name": "датчик температуры",
+      "price_rub": 1690,
+      "discontinued": false
+    },
+    {
+      "part_id": "P-3022",
+      "name": "контроллер",
+      "price_rub": 18280,
+      "discontinued": false
+    },
+    {
+      "part_id": "P-3026",
+      "name": "реле давления",
+      "price_rub": 5530,
+      "discontinued": false
+    },
+    {
+      "part_id": "P-3058",
+      "name": "терморегулирующий вентиль",
+      "price_rub": 15020,
+      "discontinued": false
+    },
+    {
+      "part_id": "P-3062",
+      "name": "циркуляционный насос",
+      "price_rub": 38970,
+      "discontinued": true
+    },
+    {
+      "part_id": "P-3062B",
+      "name": "циркуляционный насос",
+      "price_rub": 33600,
+      "discontinued": true
+    },
+    {
+      "part_id": "P-3062C",
+      "name": "циркуляционный насос",
+      "price_rub": 33190,
+      "discontinued": false
+    },
+    {
+      "part_id": "P-3066",
+      "name": "реле протока",
+      "price_rub": 4560,
+      "discontinued": false
+    },
+    {
+      "part_id": "P-3110",
+      "name": "компрессор",
+      "price_rub": 59520,
+      "discontinued": false
+    },
+    {
+      "part_id": "P-3114",
+      "name": "вентилятор конденсатора",
+      "price_rub": 8710,
+      "discontinued": false
+    },
+    {
+      "part_id": "P-3118",
+      "name": "датчик температуры",
+      "price_rub": 2210,
+      "discontinued": false
+    },
+    {
+      "part_id": "P-3122",
+      "name": "контроллер",
+      "price_rub": 16240,
+      "discontinued": false
+    },
+    {
+      "part_id": "P-3126",
+      "name": "реле давления",
+      "price_rub": 4860,
+      "discontinued": true
+    },
+    {
+      "part_id": "P-3126B",
+      "name": "реле давления",
+      "price_rub": 5220,
+      "discontinued": false
+    },
+    {
+      "part_id": "P-3158",
+      "name": "терморегулирующий вентиль",
+      "price_rub": 14290,
+      "discontinued": false
+    },
+    {
+      "part_id": "P-3162",
+      "name": "циркуляционный насос",
+      "price_rub": 40430,
+      "discontinued": false
+    },
+    {
+      "part_id": "P-3166",
+      "name": "реле протока",
+      "price_rub": 3820,
+      "discontinued": false
+    }
+  ],
+  "stock": [
+    {
+      "part_id": "P-1010",
+      "warehouse": "Москва",
+      "qty": 2
+    },
+    {
+      "part_id": "P-1010",
+      "warehouse": "Санкт-Петербург",
+      "qty": 6
+    },
+    {
+      "part_id": "P-1010",
+      "warehouse": "Казань",
+      "qty": 15
+    },
+    {
+      "part_id": "P-1010",
+      "warehouse": "Новосибирск",
+      "qty": 0
+    },
+    {
+      "part_id": "P-1014",
+      "warehouse": "Москва",
+      "qty": 10
+    },
+    {
+      "part_id": "P-1014",
+      "warehouse": "Санкт-Петербург",
+      "qty": 0
+    },
+    {
+      "part_id": "P-1014",
+      "warehouse": "Казань",
+      "qty": 5
+    },
+    {
+      "part_id": "P-1014",
+      "warehouse": "Новосибирск",
+      "qty": 12
+    },
+    {
+      "part_id": "P-1018",
+      "warehouse": "Москва",
+      "qty": 10
+    },
+    {
+      "part_id": "P-1018",
+      "warehouse": "Санкт-Петербург",
+      "qty": 3
+    },
+    {
+      "part_id": "P-1018",
+      "warehouse": "Казань",
+      "qty": 0
+    },
+    {
+      "part_id": "P-1018",
+      "warehouse": "Новосибирск",
+      "qty": 0
+    },
+    {
+      "part_id": "P-1022",
+      "warehouse": "Москва",
+      "qty": 0
+    },
+    {
+      "part_id": "P-1022",
+      "warehouse": "Санкт-Петербург",
+      "qty": 3
+    },
+    {
+      "part_id": "P-1022",
+      "warehouse": "Казань",
+      "qty": 0
+    },
+    {
+      "part_id": "P-1022",
+      "warehouse": "Новосибирск",
+      "qty": 10
+    },
+    {
+      "part_id": "P-1026",
+      "warehouse": "Москва",
+      "qty": 12
+    },
+    {
+      "part_id": "P-1026",
+      "warehouse": "Санкт-Петербург",
+      "qty": 0
+    },
+    {
+      "part_id": "P-1026",
+      "warehouse": "Казань",
+      "qty": 3
+    },
+    {
+      "part_id": "P-1026",
+      "warehouse": "Новосибирск",
+      "qty": 15
+    },
+    {
+      "part_id": "P-1042",
+      "warehouse": "Москва",
+      "qty": 0
+    },
+    {
+      "part_id": "P-1042",
+      "warehouse": "Санкт-Петербург",
+      "qty": 2
+    },
+    {
+      "part_id": "P-1042",
+      "warehouse": "Казань",
+      "qty": 2
+    },
+    {
+      "part_id": "P-1042",
+      "warehouse": "Новосибирск",
+      "qty": 1
+    },
+    {
+      "part_id": "P-1042B",
+      "warehouse": "Москва",
+      "qty": 3
+    },
+    {
+      "part_id": "P-1042B",
+      "warehouse": "Санкт-Петербург",
+      "qty": 0
+    },
+    {
+      "part_id": "P-1042B",
+      "warehouse": "Казань",
+      "qty": 3
+    },
+    {
+      "part_id": "P-1042B",
+      "warehouse": "Новосибирск",
+      "qty": 2
+    },
+    {
+      "part_id": "P-1046",
+      "warehouse": "Москва",
+      "qty": 0
+    },
+    {
+      "part_id": "P-1046",
+      "warehouse": "Санкт-Петербург",
+      "qty": 2
+    },
+    {
+      "part_id": "P-1046",
+      "warehouse": "Казань",
+      "qty": 0
+    },
+    {
+      "part_id": "P-1046",
+      "warehouse": "Новосибирск",
+      "qty": 2
+    },
+    {
+      "part_id": "P-1046B",
+      "warehouse": "Москва",
+      "qty": 15
+    },
+    {
+      "part_id": "P-1046B",
+      "warehouse": "Санкт-Петербург",
+      "qty": 2
+    },
+    {
+      "part_id": "P-1046B",
+      "warehouse": "Казань",
+      "qty": 0
+    },
+    {
+      "part_id": "P-1046B",
+      "warehouse": "Новосибирск",
+      "qty": 12
+    },
+    {
+      "part_id": "P-1050",
+      "warehouse": "Москва",
+      "qty": 3
+    },
+    {
+      "part_id": "P-1050",
+      "warehouse": "Санкт-Петербург",
+      "qty": 5
+    },
+    {
+      "part_id": "P-1050",
+      "warehouse": "Казань",
+      "qty": 0
+    },
+    {
+      "part_id": "P-1050",
+      "warehouse": "Новосибирск",
+      "qty": 10
+    },
+    {
+      "part_id": "P-1110",
+      "warehouse": "Москва",
+      "qty": 12
+    },
+    {
+      "part_id": "P-1110",
+      "warehouse": "Санкт-Петербург",
+      "qty": 0
+    },
+    {
+      "part_id": "P-1110",
+      "warehouse": "Казань",
+      "qty": 12
+    },
+    {
+      "part_id": "P-1110",
+      "warehouse": "Новосибирск",
+      "qty": 3
+    },
+    {
+      "part_id": "P-1114",
+      "warehouse": "Москва",
+      "qty": 10
+    },
+    {
+      "part_id": "P-1114",
+      "warehouse": "Санкт-Петербург",
+      "qty": 6
+    },
+    {
+      "part_id": "P-1114",
+      "warehouse": "Казань",
+      "qty": 5
+    },
+    {
+      "part_id": "P-1114",
+      "warehouse": "Новосибирск",
+      "qty": 8
+    },
+    {
+      "part_id": "P-1118",
+      "warehouse": "Москва",
+      "qty": 1
+    },
+    {
+      "part_id": "P-1118",
+      "warehouse": "Санкт-Петербург",
+      "qty": 0
+    },
+    {
+      "part_id": "P-1118",
+      "warehouse": "Казань",
+      "qty": 0
+    },
+    {
+      "part_id": "P-1118",
+      "warehouse": "Новосибирск",
+      "qty": 0
+    },
+    {
+      "part_id": "P-1118B",
+      "warehouse": "Москва",
+      "qty": 3
+    },
+    {
+      "part_id": "P-1118B",
+      "warehouse": "Санкт-Петербург",
+      "qty": 0
+    },
+    {
+      "part_id": "P-1118B",
+      "warehouse": "Казань",
+      "qty": 12
+    },
+    {
+      "part_id": "P-1118B",
+      "warehouse": "Новосибирск",
+      "qty": 4
+    },
+    {
+      "part_id": "P-1122",
+      "warehouse": "Москва",
+      "qty": 5
+    },
+    {
+      "part_id": "P-1122",
+      "warehouse": "Санкт-Петербург",
+      "qty": 8
+    },
+    {
+      "part_id": "P-1122",
+      "warehouse": "Казань",
+      "qty": 4
+    },
+    {
+      "part_id": "P-1122",
+      "warehouse": "Новосибирск",
+      "qty": 12
+    },
+    {
+      "part_id": "P-1126",
+      "warehouse": "Москва",
+      "qty": 0
+    },
+    {
+      "part_id": "P-1126",
+      "warehouse": "Санкт-Петербург",
+      "qty": 10
+    },
+    {
+      "part_id": "P-1126",
+      "warehouse": "Казань",
+      "qty": 6
+    },
+    {
+      "part_id": "P-1126",
+      "warehouse": "Новосибирск",
+      "qty": 2
+    },
+    {
+      "part_id": "P-1142",
+      "warehouse": "Москва",
+      "qty": 2
+    },
+    {
+      "part_id": "P-1142",
+      "warehouse": "Санкт-Петербург",
+      "qty": 8
+    },
+    {
+      "part_id": "P-1142",
+      "warehouse": "Казань",
+      "qty": 6
+    },
+    {
+      "part_id": "P-1142",
+      "warehouse": "Новосибирск",
+      "qty": 0
+    },
+    {
+      "part_id": "P-1146",
+      "warehouse": "Москва",
+      "qty": 0
+    },
+    {
+      "part_id": "P-1146",
+      "warehouse": "Санкт-Петербург",
+      "qty": 10
+    },
+    {
+      "part_id": "P-1146",
+      "warehouse": "Казань",
+      "qty": 12
+    },
+    {
+      "part_id": "P-1146",
+      "warehouse": "Новосибирск",
+      "qty": 5
+    },
+    {
+      "part_id": "P-1150",
+      "warehouse": "Москва",
+      "qty": 5
+    },
+    {
+      "part_id": "P-1150",
+      "warehouse": "Санкт-Петербург",
+      "qty": 12
+    },
+    {
+      "part_id": "P-1150",
+      "warehouse": "Казань",
+      "qty": 8
+    },
+    {
+      "part_id": "P-1150",
+      "warehouse": "Новосибирск",
+      "qty": 12
+    },
+    {
+      "part_id": "P-2010",
+      "warehouse": "Москва",
+      "qty": 0
+    },
+    {
+      "part_id": "P-2010",
+      "warehouse": "Санкт-Петербург",
+      "qty": 0
+    },
+    {
+      "part_id": "P-2010",
+      "warehouse": "Казань",
+      "qty": 4
+    },
+    {
+      "part_id": "P-2010",
+      "warehouse": "Новосибирск",
+      "qty": 8
+    },
+    {
+      "part_id": "P-2014",
+      "warehouse": "Москва",
+      "qty": 0
+    },
+    {
+      "part_id": "P-2014",
+      "warehouse": "Санкт-Петербург",
+      "qty": 0
+    },
+    {
+      "part_id": "P-2014",
+      "warehouse": "Казань",
+      "qty": 4
+    },
+    {
+      "part_id": "P-2014",
+      "warehouse": "Новосибирск",
+      "qty": 15
+    },
+    {
+      "part_id": "P-2018",
+      "warehouse": "Москва",
+      "qty": 8
+    },
+    {
+      "part_id": "P-2018",
+      "warehouse": "Санкт-Петербург",
+      "qty": 4
+    },
+    {
+      "part_id": "P-2018",
+      "warehouse": "Казань",
+      "qty": 6
+    },
+    {
+      "part_id": "P-2018",
+      "warehouse": "Новосибирск",
+      "qty": 15
+    },
+    {
+      "part_id": "P-2022",
+      "warehouse": "Москва",
+      "qty": 8
+    },
+    {
+      "part_id": "P-2022",
+      "warehouse": "Санкт-Петербург",
+      "qty": 5
+    },
+    {
+      "part_id": "P-2022",
+      "warehouse": "Казань",
+      "qty": 2
+    },
+    {
+      "part_id": "P-2022",
+      "warehouse": "Новосибирск",
+      "qty": 12
+    },
+    {
+      "part_id": "P-2026",
+      "warehouse": "Москва",
+      "qty": 0
+    },
+    {
+      "part_id": "P-2026",
+      "warehouse": "Санкт-Петербург",
+      "qty": 3
+    },
+    {
+      "part_id": "P-2026",
+      "warehouse": "Казань",
+      "qty": 4
+    },
+    {
+      "part_id": "P-2026",
+      "warehouse": "Новосибирск",
+      "qty": 2
+    },
+    {
+      "part_id": "P-2046",
+      "warehouse": "Москва",
+      "qty": 6
+    },
+    {
+      "part_id": "P-2046",
+      "warehouse": "Санкт-Петербург",
+      "qty": 6
+    },
+    {
+      "part_id": "P-2046",
+      "warehouse": "Казань",
+      "qty": 8
+    },
+    {
+      "part_id": "P-2046",
+      "warehouse": "Новосибирск",
+      "qty": 0
+    },
+    {
+      "part_id": "P-2054",
+      "warehouse": "Москва",
+      "qty": 1
+    },
+    {
+      "part_id": "P-2054",
+      "warehouse": "Санкт-Петербург",
+      "qty": 2
+    },
+    {
+      "part_id": "P-2054",
+      "warehouse": "Казань",
+      "qty": 0
+    },
+    {
+      "part_id": "P-2054",
+      "warehouse": "Новосибирск",
+      "qty": 0
+    },
+    {
+      "part_id": "P-2054B",
+      "warehouse": "Москва",
+      "qty": 2
+    },
+    {
+      "part_id": "P-2054B",
+      "warehouse": "Санкт-Петербург",
+      "qty": 0
+    },
+    {
+      "part_id": "P-2054B",
+      "warehouse": "Казань",
+      "qty": 1
+    },
+    {
+      "part_id": "P-2054B",
+      "warehouse": "Новосибирск",
+      "qty": 0
+    },
+    {
+      "part_id": "P-2054C",
+      "warehouse": "Москва",
+      "qty": 6
+    },
+    {
+      "part_id": "P-2054C",
+      "warehouse": "Санкт-Петербург",
+      "qty": 3
+    },
+    {
+      "part_id": "P-2054C",
+      "warehouse": "Казань",
+      "qty": 2
+    },
+    {
+      "part_id": "P-2054C",
+      "warehouse": "Новосибирск",
+      "qty": 0
+    },
+    {
+      "part_id": "P-2058",
+      "warehouse": "Москва",
+      "qty": 3
+    },
+    {
+      "part_id": "P-2058",
+      "warehouse": "Санкт-Петербург",
+      "qty": 15
+    },
+    {
+      "part_id": "P-2058",
+      "warehouse": "Казань",
+      "qty": 3
+    },
+    {
+      "part_id": "P-2058",
+      "warehouse": "Новосибирск",
+      "qty": 0
+    },
+    {
+      "part_id": "P-2110",
+      "warehouse": "Москва",
+      "qty": 2
+    },
+    {
+      "part_id": "P-2110",
+      "warehouse": "Санкт-Петербург",
+      "qty": 0
+    },
+    {
+      "part_id": "P-2110",
+      "warehouse": "Казань",
+      "qty": 0
+    },
+    {
+      "part_id": "P-2110",
+      "warehouse": "Новосибирск",
+      "qty": 0
+    },
+    {
+      "part_id": "P-2110B",
+      "warehouse": "Москва",
+      "qty": 6
+    },
+    {
+      "part_id": "P-2110B",
+      "warehouse": "Санкт-Петербург",
+      "qty": 10
+    },
+    {
+      "part_id": "P-2110B",
+      "warehouse": "Казань",
+      "qty": 5
+    },
+    {
+      "part_id": "P-2110B",
+      "warehouse": "Новосибирск",
+      "qty": 12
+    },
+    {
+      "part_id": "P-2114",
+      "warehouse": "Москва",
+      "qty": 2
+    },
+    {
+      "part_id": "P-2114",
+      "warehouse": "Санкт-Петербург",
+      "qty": 10
+    },
+    {
+      "part_id": "P-2114",
+      "warehouse": "Казань",
+      "qty": 12
+    },
+    {
+      "part_id": "P-2114",
+      "warehouse": "Новосибирск",
+      "qty": 15
+    },
+    {
+      "part_id": "P-2118",
+      "warehouse": "Москва",
+      "qty": 15
+    },
+    {
+      "part_id": "P-2118",
+      "warehouse": "Санкт-Петербург",
+      "qty": 10
+    },
+    {
+      "part_id": "P-2118",
+      "warehouse": "Казань",
+      "qty": 6
+    },
+    {
+      "part_id": "P-2118",
+      "warehouse": "Новосибирск",
+      "qty": 6
+    },
+    {
+      "part_id": "P-2122",
+      "warehouse": "Москва",
+      "qty": 0
+    },
+    {
+      "part_id": "P-2122",
+      "warehouse": "Санкт-Петербург",
+      "qty": 8
+    },
+    {
+      "part_id": "P-2122",
+      "warehouse": "Казань",
+      "qty": 15
+    },
+    {
+      "part_id": "P-2122",
+      "warehouse": "Новосибирск",
+      "qty": 6
+    },
+    {
+      "part_id": "P-2126",
+      "warehouse": "Москва",
+      "qty": 0
+    },
+    {
+      "part_id": "P-2126",
+      "warehouse": "Санкт-Петербург",
+      "qty": 3
+    },
+    {
+      "part_id": "P-2126",
+      "warehouse": "Казань",
+      "qty": 8
+    },
+    {
+      "part_id": "P-2126",
+      "warehouse": "Новосибирск",
+      "qty": 2
+    },
+    {
+      "part_id": "P-2146",
+      "warehouse": "Москва",
+      "qty": 12
+    },
+    {
+      "part_id": "P-2146",
+      "warehouse": "Санкт-Петербург",
+      "qty": 0
+    },
+    {
+      "part_id": "P-2146",
+      "warehouse": "Казань",
+      "qty": 0
+    },
+    {
+      "part_id": "P-2146",
+      "warehouse": "Новосибирск",
+      "qty": 0
+    },
+    {
+      "part_id": "P-2154",
+      "warehouse": "Москва",
+      "qty": 10
+    },
+    {
+      "part_id": "P-2154",
+      "warehouse": "Санкт-Петербург",
+      "qty": 0
+    },
+    {
+      "part_id": "P-2154",
+      "warehouse": "Казань",
+      "qty": 5
+    },
+    {
+      "part_id": "P-2154",
+      "warehouse": "Новосибирск",
+      "qty": 12
+    },
+    {
+      "part_id": "P-2158",
+      "warehouse": "Москва",
+      "qty": 3
+    },
+    {
+      "part_id": "P-2158",
+      "warehouse": "Санкт-Петербург",
+      "qty": 12
+    },
+    {
+      "part_id": "P-2158",
+      "warehouse": "Казань",
+      "qty": 6
+    },
+    {
+      "part_id": "P-2158",
+      "warehouse": "Новосибирск",
+      "qty": 2
+    },
+    {
+      "part_id": "P-3010",
+      "warehouse": "Москва",
+      "qty": 5
+    },
+    {
+      "part_id": "P-3010",
+      "warehouse": "Санкт-Петербург",
+      "qty": 12
+    },
+    {
+      "part_id": "P-3010",
+      "warehouse": "Казань",
+      "qty": 5
+    },
+    {
+      "part_id": "P-3010",
+      "warehouse": "Новосибирск",
+      "qty": 8
+    },
+    {
+      "part_id": "P-3014",
+      "warehouse": "Москва",
+      "qty": 8
+    },
+    {
+      "part_id": "P-3014",
+      "warehouse": "Санкт-Петербург",
+      "qty": 8
+    },
+    {
+      "part_id": "P-3014",
+      "warehouse": "Казань",
+      "qty": 8
+    },
+    {
+      "part_id": "P-3014",
+      "warehouse": "Новосибирск",
+      "qty": 8
+    },
+    {
+      "part_id": "P-3018",
+      "warehouse": "Москва",
+      "qty": 2
+    },
+    {
+      "part_id": "P-3018",
+      "warehouse": "Санкт-Петербург",
+      "qty": 0
+    },
+    {
+      "part_id": "P-3018",
+      "warehouse": "Казань",
+      "qty": 5
+    },
+    {
+      "part_id": "P-3018",
+      "warehouse": "Новосибирск",
+      "qty": 4
+    },
+    {
+      "part_id": "P-3022",
+      "warehouse": "Москва",
+      "qty": 2
+    },
+    {
+      "part_id": "P-3022",
+      "warehouse": "Санкт-Петербург",
+      "qty": 10
+    },
+    {
+      "part_id": "P-3022",
+      "warehouse": "Казань",
+      "qty": 0
+    },
+    {
+      "part_id": "P-3022",
+      "warehouse": "Новосибирск",
+      "qty": 3
+    },
+    {
+      "part_id": "P-3026",
+      "warehouse": "Москва",
+      "qty": 10
+    },
+    {
+      "part_id": "P-3026",
+      "warehouse": "Санкт-Петербург",
+      "qty": 5
+    },
+    {
+      "part_id": "P-3026",
+      "warehouse": "Казань",
+      "qty": 2
+    },
+    {
+      "part_id": "P-3026",
+      "warehouse": "Новосибирск",
+      "qty": 10
+    },
+    {
+      "part_id": "P-3058",
+      "warehouse": "Москва",
+      "qty": 10
+    },
+    {
+      "part_id": "P-3058",
+      "warehouse": "Санкт-Петербург",
+      "qty": 4
+    },
+    {
+      "part_id": "P-3058",
+      "warehouse": "Казань",
+      "qty": 15
+    },
+    {
+      "part_id": "P-3058",
+      "warehouse": "Новосибирск",
+      "qty": 0
+    },
+    {
+      "part_id": "P-3062",
+      "warehouse": "Москва",
+      "qty": 0
+    },
+    {
+      "part_id": "P-3062",
+      "warehouse": "Санкт-Петербург",
+      "qty": 2
+    },
+    {
+      "part_id": "P-3062",
+      "warehouse": "Казань",
+      "qty": 0
+    },
+    {
+      "part_id": "P-3062",
+      "warehouse": "Новосибирск",
+      "qty": 0
+    },
+    {
+      "part_id": "P-3062B",
+      "warehouse": "Москва",
+      "qty": 0
+    },
+    {
+      "part_id": "P-3062B",
+      "warehouse": "Санкт-Петербург",
+      "qty": 2
+    },
+    {
+      "part_id": "P-3062B",
+      "warehouse": "Казань",
+      "qty": 2
+    },
+    {
+      "part_id": "P-3062B",
+      "warehouse": "Новосибирск",
+      "qty": 2
+    },
+    {
+      "part_id": "P-3062C",
+      "warehouse": "Москва",
+      "qty": 3
+    },
+    {
+      "part_id": "P-3062C",
+      "warehouse": "Санкт-Петербург",
+      "qty": 12
+    },
+    {
+      "part_id": "P-3062C",
+      "warehouse": "Казань",
+      "qty": 3
+    },
+    {
+      "part_id": "P-3062C",
+      "warehouse": "Новосибирск",
+      "qty": 3
+    },
+    {
+      "part_id": "P-3066",
+      "warehouse": "Москва",
+      "qty": 3
+    },
+    {
+      "part_id": "P-3066",
+      "warehouse": "Санкт-Петербург",
+      "qty": 3
+    },
+    {
+      "part_id": "P-3066",
+      "warehouse": "Казань",
+      "qty": 10
+    },
+    {
+      "part_id": "P-3066",
+      "warehouse": "Новосибирск",
+      "qty": 8
+    },
+    {
+      "part_id": "P-3110",
+      "warehouse": "Москва",
+      "qty": 0
+    },
+    {
+      "part_id": "P-3110",
+      "warehouse": "Санкт-Петербург",
+      "qty": 0
+    },
+    {
+      "part_id": "P-3110",
+      "warehouse": "Казань",
+      "qty": 4
+    },
+    {
+      "part_id": "P-3110",
+      "warehouse": "Новосибирск",
+      "qty": 8
+    },
+    {
+      "part_id": "P-3114",
+      "warehouse": "Москва",
+      "qty": 12
+    },
+    {
+      "part_id": "P-3114",
+      "warehouse": "Санкт-Петербург",
+      "qty": 5
+    },
+    {
+      "part_id": "P-3114",
+      "warehouse": "Казань",
+      "qty": 8
+    },
+    {
+      "part_id": "P-3114",
+      "warehouse": "Новосибирск",
+      "qty": 5
+    },
+    {
+      "part_id": "P-3118",
+      "warehouse": "Москва",
+      "qty": 5
+    },
+    {
+      "part_id": "P-3118",
+      "warehouse": "Санкт-Петербург",
+      "qty": 0
+    },
+    {
+      "part_id": "P-3118",
+      "warehouse": "Казань",
+      "qty": 3
+    },
+    {
+      "part_id": "P-3118",
+      "warehouse": "Новосибирск",
+      "qty": 0
+    },
+    {
+      "part_id": "P-3122",
+      "warehouse": "Москва",
+      "qty": 3
+    },
+    {
+      "part_id": "P-3122",
+      "warehouse": "Санкт-Петербург",
+      "qty": 5
+    },
+    {
+      "part_id": "P-3122",
+      "warehouse": "Казань",
+      "qty": 3
+    },
+    {
+      "part_id": "P-3122",
+      "warehouse": "Новосибирск",
+      "qty": 8
+    },
+    {
+      "part_id": "P-3126",
+      "warehouse": "Москва",
+      "qty": 2
+    },
+    {
+      "part_id": "P-3126",
+      "warehouse": "Санкт-Петербург",
+      "qty": 0
+    },
+    {
+      "part_id": "P-3126",
+      "warehouse": "Казань",
+      "qty": 1
+    },
+    {
+      "part_id": "P-3126",
+      "warehouse": "Новосибирск",
+      "qty": 0
+    },
+    {
+      "part_id": "P-3126B",
+      "warehouse": "Москва",
+      "qty": 0
+    },
+    {
+      "part_id": "P-3126B",
+      "warehouse": "Санкт-Петербург",
+      "qty": 15
+    },
+    {
+      "part_id": "P-3126B",
+      "warehouse": "Казань",
+      "qty": 0
+    },
+    {
+      "part_id": "P-3126B",
+      "warehouse": "Новосибирск",
+      "qty": 6
+    },
+    {
+      "part_id": "P-3158",
+      "warehouse": "Москва",
+      "qty": 3
+    },
+    {
+      "part_id": "P-3158",
+      "warehouse": "Санкт-Петербург",
+      "qty": 8
+    },
+    {
+      "part_id": "P-3158",
+      "warehouse": "Казань",
+      "qty": 2
+    },
+    {
+      "part_id": "P-3158",
+      "warehouse": "Новосибирск",
+      "qty": 6
+    },
+    {
+      "part_id": "P-3162",
+      "warehouse": "Москва",
+      "qty": 5
+    },
+    {
+      "part_id": "P-3162",
+      "warehouse": "Санкт-Петербург",
+      "qty": 0
+    },
+    {
+      "part_id": "P-3162",
+      "warehouse": "Казань",
+      "qty": 6
+    },
+    {
+      "part_id": "P-3162",
+      "warehouse": "Новосибирск",
+      "qty": 8
+    },
+    {
+      "part_id": "P-3166",
+      "warehouse": "Москва",
+      "qty": 0
+    },
+    {
+      "part_id": "P-3166",
+      "warehouse": "Санкт-Петербург",
+      "qty": 2
+    },
+    {
+      "part_id": "P-3166",
+      "warehouse": "Казань",
+      "qty": 2
+    },
+    {
+      "part_id": "P-3166",
+      "warehouse": "Новосибирск",
+      "qty": 2
+    }
+  ]
+}

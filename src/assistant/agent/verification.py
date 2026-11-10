@@ -12,6 +12,12 @@ _STOCK = re.compile(rf"({_NUMBER})\s*(?:шт\w*|единиц\w*)", re.IGNORECASE
 _NAMED_PRICE = re.compile(rf"(?:цен\w*|стоимост\w*|стоит)\s*[:=]?\s*({_NUMBER})", re.IGNORECASE)
 _NAMED_STOCK = re.compile(rf"(?:остаток|в наличии|на складе)\s*[:=]?\s*({_NUMBER})", re.IGNORECASE)
 _ORDER_ID = re.compile(r"\bSO-\d+\b", re.IGNORECASE)
+_SUPPLIER = re.compile(r"поставщик\w*|кто\s+поставля\w*", re.IGNORECASE)
+_ERP_LOOKUP = re.compile(
+    r"провер\w*|уточн\w*|узна\w*|выясн\w*|определ\w*|получ\w*|запрос\w*|най[тд]\w*|"
+    r"хран\w*|содерж\w*|покаж\w*|верн\w*|возвращ\w*",
+    re.IGNORECASE,
+)
 _ORDER_COUNT = re.compile(
     r"(?:количеств\w*|закаж\w*|заказ(?:ать)?(?:\s+на)?)\s*[:=]?\s*$", re.IGNORECASE
 )
@@ -64,6 +70,28 @@ def requested_quantities(question: str) -> set[int]:
 def allowed_codes(question: str, results: list[tuple[str, dict]]) -> set[str]:
     evidence = question + json.dumps([result for _, result in results], ensure_ascii=False)
     return set(find_codes(evidence))
+
+
+def unsupported_erp_claims(text: str) -> bool:
+    """Замечает утверждения о поиске поставщика в ERP, которого нет среди её возможностей."""
+    for sentence in re.split(r"[.!?;\n]+", text):
+        for clause in sentence.split(","):
+            supplier = _SUPPLIER.search(clause) or (
+                _SUPPLIER.search(sentence)
+                and re.search(r"\b(?:его|эту информацию|эти сведения)\b", clause, re.IGNORECASE)
+            )
+            if not supplier or not re.search(r"\bERP\b", clause, re.IGNORECASE):
+                continue
+            if re.search(r"\b(?:нельзя|невозможно)\b", clause, re.IGNORECASE):
+                continue
+            for action in _ERP_LOOKUP.finditer(clause):
+                if not re.search(
+                    r"\bне\s+(?:(?:может|могут|позволяет|умеет|будет|нужно|надо|следует|стоит)\s+)?$",
+                    clause[: action.start()],
+                    re.IGNORECASE,
+                ):
+                    return True
+    return False
 
 
 def unsupported_facts(text: str, question: str, results: list[tuple[str, dict]]) -> list[str]:

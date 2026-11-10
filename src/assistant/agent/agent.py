@@ -5,7 +5,12 @@ import re
 from collections.abc import Callable
 
 from assistant.agent.tools import TOOL_SCHEMAS, validate_arguments
-from assistant.agent.verification import allowed_codes, requested_quantities, unsupported_facts
+from assistant.agent.verification import (
+    allowed_codes,
+    requested_quantities,
+    unsupported_erp_claims,
+    unsupported_facts,
+)
 from assistant.infra.erp_client import ErpNotFound, ErpRejected, ErpUnavailable
 from assistant.infra.grounding import code_type, find_codes
 from assistant.infra.llm import LLMClient, tool_message
@@ -121,7 +126,7 @@ def run_agent(
     erp_failed = False
 
     def finish(text: str, **kwargs) -> AgentResult:
-        if unsupported_facts(text, question, results):
+        if unsupported_facts(text, question, results) or unsupported_erp_claims(text):
             text = REFUSAL
             kwargs["refused"] = True
         return AgentResult(text, steps=list(steps), sources=sorted(sources), **kwargs)
@@ -131,17 +136,25 @@ def run_agent(
         messages.append(response.as_message())
         if not response.tool_calls:
             text = response.content.strip()
-            if unsupported_facts(text, question, results):
+            erp_claim = unsupported_erp_claims(text)
+            if unsupported_facts(text, question, results) or erp_claim:
                 if corrections:
                     return finish(REFUSAL, refused=True)
                 corrections += 1
+                correction = (
+                    "В ERP доступны только цена, остаток и создание заказа; поиск поставщика она не поддерживает. "
+                    "Убери ошибочный совет обратиться за поставщиком в ERP. Ответь кратко только на исходный "
+                    "вопрос по проверенным результатам инструментов. Если пользователь запросил поставщика, "
+                    "проверь его через search_knowledge; при отсутствии сведений честно сообщи об этом. "
+                    "Не добавляй незапрошенные параметры и не придумывай факты."
+                    if erp_claim
+                    else "В ответе есть неподтверждённый код, цена или остаток. Исправь ответ только по "
+                    "вопросу и результатам инструментов. Если данных нет, откажись."
+                )
                 messages.append(
                     {
                         "role": "user",
-                        "content": (
-                            "В ответе есть неподтверждённый код, цена или остаток. Исправь ответ только по "
-                            "вопросу и результатам инструментов. Если данных нет, откажись."
-                        ),
+                        "content": correction,
                     }
                 )
                 continue
@@ -292,7 +305,7 @@ def run_agent(
                 cache[key] = value
             error = value.get("error")
             steps.append(ToolStep(call.name, args, value, error))
-            messages.append(tool_message(call, value))
+            messages.append(tool_message(call, {key: item for key, item in value.items() if key != "sources"}))
             if not error:
                 results.append((call.name, value))
                 sources.update(value.get("sources", []))

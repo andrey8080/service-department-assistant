@@ -1,3 +1,4 @@
+import json
 from unittest.mock import Mock
 
 import pytest
@@ -5,7 +6,7 @@ from fastapi.testclient import TestClient
 
 from assistant.agent.agent import run_agent
 from assistant.agent.tools import build_tools, validate_arguments
-from assistant.agent.verification import requested_quantities, unsupported_facts
+from assistant.agent.verification import requested_quantities, unsupported_erp_claims, unsupported_facts
 from assistant.graphrag.graph_builder import build_graph
 from assistant.infra.erp_client import ErpClient, ErpNotFound, ErpRejected, ErpUnavailable
 from assistant.infra.llm import LLMResponse, ToolCall
@@ -18,6 +19,139 @@ ORDER = {"part_id": "P-1042B", "warehouse": "Казань", "qty": 2, "model": "
 
 def call(name, **arguments):
     return LLMResponse("", [ToolCall("test-call", name, arguments)])
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Для точного поставщика требуется проверка в ERP по детали P-4800B.",
+        "Поставщика можно узнать через ERP.",
+        "ERP хранит сведения о поставщике детали.",
+        "Получите информацию о поставщике из ERP.",
+        "Поставщик не указан в документах, но его можно узнать через ERP.",
+        "Поставщика не знаем, но ERP может вернуть эти сведения.",
+    ],
+)
+def test_supplier_lookup_is_not_an_erp_capability(text):
+    assert unsupported_erp_claims(text)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "ERP не содержит сведений о поставщике.",
+        "ERP не может вернуть сведения о поставщике.",
+        "Не стоит проверять поставщика через ERP.",
+        "Узнать поставщика через ERP нельзя.",
+        "Поставщик СеверПрибор; ERP вернула цену 2630 руб.",
+        "Получите остаток из ERP, поставщик указан в бюллетене.",
+        "Поставщик СеверПрибор. ERP временно недоступна.",
+        "Поставщика нужно проверить по документам.",
+    ],
+)
+def test_erp_limitations_and_independent_document_facts_are_allowed(text):
+    assert not unsupported_erp_claims(text)
+
+
+def test_capability_review_removes_unrequested_supplier_advice_without_calling_erp():
+    search = Mock(
+        return_value={
+            "answer": "P-4800B.",
+            "facts": ["P-4800 -REPLACED_BY-> P-4800B"],
+            "sources": ["bulletin.md"],
+            "refused": False,
+        }
+    )
+    price = Mock()
+    llm = FakeLLM(
+        [
+            call("search_knowledge", question="Актуальная замена P-4800?"),
+            "Актуальная деталь P-4800B. Поставщика можно узнать через ERP.",
+            "Актуальная деталь P-4800B.",
+        ]
+    )
+
+    result = run_agent("Актуальная замена P-4800?", llm, {"search_knowledge": search, "get_price": price})
+
+    assert result.answer == "Актуальная деталь P-4800B." and not result.refused
+    assert result.sources == ["bulletin.md"] and len(result.steps) == 1
+    assert "не поддерживает" in llm.requests[2]["messages"][-1]["content"]
+    assert len(llm.requests) == 3
+    price.assert_not_called()
+
+
+def test_capability_review_can_request_the_supplier_from_documents():
+    question = "Кто поставляет P-4800?"
+    search = Mock(return_value={"answer": "СеверПрибор.", "sources": ["manual.md"], "refused": False})
+    llm = FakeLLM(
+        [
+            "Сведения о поставщике можно получить в ERP.",
+            call("search_knowledge", question=question),
+            "Поставщик СеверПрибор.",
+        ]
+    )
+
+    result = run_agent(question, llm, {"search_knowledge": search})
+
+    assert result.answer == "Поставщик СеверПрибор." and not result.refused
+    search.assert_called_once_with(question=question)
+
+
+@pytest.mark.parametrize(
+    "second",
+    ["Уточните поставщика в ERP.", "Цена 999999 руб.", "Поставщик P-8800."],
+)
+def test_capability_review_shares_one_correction_with_grounding(second):
+    llm = FakeLLM(["Уточните поставщика в ERP.", second])
+
+    result = run_agent("Кто поставляет P-4800?", llm, {})
+
+    assert result.refused and "В базе знаний не найдено" in result.answer
+    assert len(llm.requests) == 2 and not result.steps
+
+
+def test_tool_observation_omits_source_paths_but_keeps_all_evidence_and_public_sources():
+    value = {
+        "answer": "Нужна P-4800B.",
+        "facts": ["P-4800 -REPLACED_BY-> P-4800B"],
+        "sources": ["bulletin.md", "manual.md"],
+        "refused": False,
+    }
+    llm = FakeLLM([call("search_knowledge", question="Замена P-4800?"), "Нужна P-4800B."])
+
+    result = run_agent("Замена P-4800?", llm, {"search_knowledge": Mock(return_value=value)})
+
+    observation = json.loads(llm.requests[1]["messages"][-1]["content"])
+    assert observation == {key: item for key, item in value.items() if key != "sources"}
+    assert result.steps[0].result == value and result.sources == value["sources"]
+
+
+@pytest.mark.parametrize("confirm", [False, True])
+def test_capability_correction_cannot_bypass_order_confirmation(confirm):
+    create = Mock(return_value={"order_id": "SO-000042", **ORDER})
+    llm = FakeLLM(
+        [
+            "Перед заказом поставщика можно проверить в ERP.",
+            call("create_service_order", **ORDER),
+            "Заказ SO-000042 создан.",
+        ]
+    )
+
+    result = run_agent(
+        "Закажи 2 шт. P-1042B для AR-210 в Казани.",
+        llm,
+        {"create_service_order": create},
+        confirm=confirm,
+    )
+
+    assert result.needs_confirmation == (not confirm) and not result.refused
+    if confirm:
+        create.assert_called_once_with(**ORDER)
+        assert result.pending_action is None and "SO-000042" in result.answer
+    else:
+        create.assert_not_called()
+        assert result.pending_action == {"tool": "create_service_order", "args": ORDER}
+        assert "SO-000042" not in result.answer
 
 
 @pytest.mark.parametrize(

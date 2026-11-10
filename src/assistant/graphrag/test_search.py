@@ -305,9 +305,7 @@ def test_summary_rejects_essential_counts_over_budget_without_shortening_the_tab
     llm = FakeLLM(
         [
             summary_response(
-                failure_counts=[
-                    {"product_line": "Север", "by_component": {component: 4}, "by_model": {"GS-610": 4}}
-                ]
+                failure_counts=[{"product_line": "Север", "by_component": {component: 4}, "by_model": {"GS-610": 4}}]
             )
         ]
     )
@@ -715,6 +713,9 @@ def test_global_search_cites_only_useful_communities_and_deduplicates_documents(
 def test_global_search_keeps_summary_evidence_that_the_partial_answer_lost():
     graph = nx.DiGraph()
     connect(graph, "Model:GS-610", "HAS_PART", "Part:P-9080")
+    connect(graph, "Model:GS-610", "HAS_PART", "Part:P-9070")
+    connect(graph, "Part:P-9070", "REPLACED_BY", "Part:P-9070B")
+    connect(graph, "Part:P-9070B", "REPLACED_BY", "Part:P-9070C")
     connect(graph, "Model:GS-610", "BELONGS_TO", "ProductLine:Север")
     connect(graph, "Model:GS-610", "FAILED", "Component:скрытый узел", weight=9999)
     summary = (
@@ -742,12 +743,12 @@ def test_global_search_keeps_summary_evidence_that_the_partial_answer_lost():
     assert len(llm.requests) == 2
     assert llm.requests[0]["json_schema"] == MAP_SCHEMA
     content = llm.requests[-1]["messages"][-1]["content"]
-    useful = json.loads(content[content.index("[") :])
+    partials, rows = content.split("Частичные ответы:\n", 1)[1].split("\nПодтверждения:\n", 1)
+    useful = json.loads(partials)
+    evidence = {int(line.split(". ", 1)[0]): line.split(". ", 1)[1] for line in rows.splitlines()}
     assert len(useful) == 1
-    assert useful[0]["community"] == 7
     assert useful[0]["answer"] == partial
-    assert useful[0]["score"] == 8
-    assert useful[0]["summary"] == summary
+    assert "\n".join(evidence[number] for number in useful[0]["evidence_ids"]) == summary
     assert "P-9080" not in content
     assert "9999" not in content
     assert "скрытый узел" not in content
@@ -773,9 +774,11 @@ def test_global_search_keeps_supporting_summaries_only_for_valid_positive_answer
     assert len(llm.requests) == 4
     assert all(request["json_schema"] == MAP_SCHEMA for request in llm.requests[:3])
     content = llm.requests[-1]["messages"][-1]["content"]
-    useful = json.loads(content[content.index("[") :])
+    partials, rows = content.split("Частичные ответы:\n", 1)[1].split("\nПодтверждения:\n", 1)
+    useful = json.loads(partials)
     assert len(useful) == 1
-    assert useful[0]["summary"] == accepted
+    assert useful[0]["evidence_ids"] == [1]
+    assert rows == f"1. {accepted}"
     assert rejected not in content
     assert unreadable not in content
     assert "P-9099" not in content and "P-9098" not in content
@@ -809,7 +812,11 @@ def test_global_search_cites_external_replacement_pairs_and_original_parts():
     connect(graph, "Model:BZ-610", "BELONGS_TO", "ProductLine:Юг", source="south.md#0")
     connect(graph, "Part:P-9080", "REPLACED_BY", "Part:P-9080B", source="unrelated_replacement.md#0")
     connect(graph, "Model:AR-610", "HAS_PART", "Part:P-9080", source="unrelated_manual.md#0")
-    community = Community(0, ["Part:P-9070C"], "В Севере исходная P-9070 заменена на P-9070B, затем P-9070C.")
+    community = Community(
+        0,
+        ["Part:P-9070C"],
+        ("Исходная деталь | Север | GS-610 | P-9070\nP-9070 снята; замена P-9070B.\nP-9070B снята; замена P-9070C."),
+    )
     llm = FakeLLM(
         [
             '{"answer":"Исходная деталь моделей Севера P-9070 снята с производства.","score":8}',
@@ -851,3 +858,377 @@ def test_global_search_marks_empty_final_answer_and_model_refusal(response):
 
     assert answer.refused
     assert "В базе знаний не найдено" in answer.text
+
+
+def cited_response(answer, ids):
+    return json.dumps({"answer": answer, "evidence_ids": ids}, ensure_ascii=False)
+
+
+def test_local_citations_cover_all_returned_facts_with_fewer_duplicate_documents():
+    graph = nx.DiGraph()
+    connect(graph, "Model:GS-610", "HAS_PART", "Part:P-9070", source="manual_gs.md#0")
+    connect(graph, "Part:P-9070", "IS_A", "Component:насос", source="manual_gs.md#0")
+    graph.edges["Part:P-9070", "Component:насос"]["sources"].append("unrelated_model.md#0")
+    connect(graph, "Part:P-9070", "REPLACED_BY", "Part:P-9070B", source="bulletin.md#0")
+    connect(graph, "Model:GS-610", "HAS_PART", "Part:P-9080", source="lighting.md#0")
+    kb = KnowledgeBase(graph, [], {"Component": ["насос"]})
+    llm = FakeLLM([cited_response("Для GS-610 закажите P-9070B.", [1, 2, 3])])
+
+    answer = local_search("Какая актуальная деталь насоса для GS-610?", kb, llm)
+
+    assert not answer.refused
+    assert answer.sources == ["bulletin.md", "manual_gs.md"]
+    assert len(answer.facts) == 3
+    assert not any("P-9080" in fact for fact in answer.facts)
+    assert "Оборудование: GS-610" in llm.requests[0]["messages"][-1]["content"]
+    assert llm.requests[0]["json_schema"] is not None
+
+
+@pytest.mark.parametrize("ids", [[], [0], [-1], [3], [True], ["1"]])
+def test_local_rejects_missing_and_invalid_citation_ids(ids):
+    graph = nx.DiGraph()
+    connect(graph, "Part:P-9070", "REPLACED_BY", "Part:P-9070B")
+    llm = FakeLLM([cited_response("Нужна P-9070B.", ids)] * 2)
+
+    answer = local_search("Чем заменить P-9070?", KnowledgeBase(graph, [], {}), llm)
+
+    assert answer.refused and answer.text == "В базе знаний не найдено достаточно данных для ответа."
+    assert len(llm.requests) == 2
+
+
+def test_local_rejects_a_known_but_uncited_code_then_retries_with_the_same_facts():
+    graph = nx.DiGraph()
+    connect(graph, "Model:GS-610", "HAS_PART", "Part:P-9070", source="manual.md#0")
+    connect(graph, "Part:P-9070", "REPLACED_BY", "Part:P-9070B", source="bulletin.md#0")
+    llm = FakeLLM(
+        [
+            cited_response("Нужна P-9070B.", [2]),
+            cited_response("Нужна P-9070B.", [1, 2]),
+        ]
+    )
+
+    answer = local_search("Что заказать для GS-610?", KnowledgeBase(graph, [], {}), llm)
+
+    assert not answer.refused
+    assert len(llm.requests) == 2
+    assert answer.sources == ["bulletin.md", "manual.md"]
+    assert len(answer.facts) == 2
+
+
+@pytest.mark.parametrize(
+    "claim",
+    ["P-9070B есть на складе в Казани.", "Остаток: 8 штук.", "Цена P-9070B — 1900 рублей."],
+)
+def test_local_cannot_claim_live_erp_values_from_document_facts(claim):
+    graph = nx.DiGraph()
+    connect(graph, "Part:P-9070", "REPLACED_BY", "Part:P-9070B")
+    llm = FakeLLM([cited_response(claim, [1])] * 2)
+
+    answer = local_search("Чем заменить P-9070?", KnowledgeBase(graph, [], {}), llm)
+
+    assert answer.refused
+    assert claim not in answer.text
+    assert len(llm.requests) == 2
+
+
+def test_local_can_explain_that_live_price_is_unknown():
+    graph = nx.DiGraph()
+    connect(graph, "Part:P-9070", "REPLACED_BY", "Part:P-9070B")
+    text = "Актуальная деталь P-9070B; цена и наличие на складе неизвестны."
+    llm = FakeLLM([cited_response(text, [1])])
+
+    answer = local_search("Какая замена и цена P-9070?", KnowledgeBase(graph, [], {}), llm)
+
+    assert not answer.refused and answer.text == text
+    assert len(llm.requests) == 1
+
+
+def test_global_cites_only_the_selected_replacement_chain_and_model():
+    graph = nx.DiGraph()
+    connect(graph, "Model:GS-610", "HAS_PART", "Part:P-9070", source="manual.md#0")
+    connect(graph, "Model:GS-610", "BELONGS_TO", "ProductLine:Север", source="manual.md#0")
+    connect(graph, "Part:P-9070", "REPLACED_BY", "Part:P-9070B", source="bulletin.md#0")
+    connect(graph, "Part:P-9070B", "SUPPLIED_BY", "Supplier:Поставщик", source="supplier.md#0")
+    summary = (
+        "Исходная деталь | Север | GS-610 | P-9070\nP-9070 снята; замена P-9070B.\nP-9070B -SUPPLIED_BY-> Поставщик"
+    )
+    llm = FakeLLM(
+        [
+            '{"answer":"Исходная P-9070 снята.","score":9}',
+            cited_response("В руководстве GS-610 снята P-9070.", [1, 2]),
+        ]
+    )
+
+    answer = global_search(
+        "Какие исходные детали Севера сняты?", KnowledgeBase(graph, [Community(0, list(graph), summary)], {}), llm
+    )
+
+    assert not answer.refused
+    assert answer.sources == ["bulletin.md", "manual.md"]
+    assert answer.facts == summary.splitlines()[:2]
+    assert len(llm.requests) == 2
+
+
+def test_global_comparison_retains_every_report_in_the_cited_count_table():
+    graph = nx.DiGraph()
+    connect(graph, "Model:GS-610", "BELONGS_TO", "ProductLine:Север", source="manual.md#0")
+    connect(graph, "Model:GS-620", "BELONGS_TO", "ProductLine:Север", source="manual.md#1")
+    connect(graph, "Model:GS-610", "FAILED", "Component:насос", weight=2, source="report1.md#0")
+    graph.edges["Model:GS-610", "Component:насос"]["sources"].append("report2.md#0")
+    connect(graph, "Model:GS-620", "FAILED", "Component:датчик", weight=1, source="report3.md#0")
+    connect(graph, "Part:P-9070", "SUPPLIED_BY", "Supplier:Поставщик", source="unrelated.md#0")
+    summary = "Отказы узлов, Север | датчик: 1; насос: 2\nВсего отказов моделей, Север | GS-610: 2; GS-620: 1"
+    llm = FakeLLM(
+        [
+            '{"answer":"Насос: 2, датчик: 1.","score":9}',
+            cited_response("В Севере чаще отказывает насос — 2 отказа.", [1]),
+        ]
+    )
+
+    answer = global_search(
+        "Какой узел чаще отказывает в Севере?", KnowledgeBase(graph, [Community(0, list(graph), summary)], {}), llm
+    )
+
+    assert not answer.refused
+    assert answer.sources == ["manual.md", "report1.md", "report2.md", "report3.md"]
+    assert len(answer.facts) == 1
+
+
+@pytest.mark.parametrize(
+    "final",
+    [
+        cited_response("Нужна P-9070B.", [2]),
+        cited_response("Нужна P-9080.", [1]),
+        cited_response("Нужна P-9070B.", []),
+    ],
+)
+def test_global_rejects_invalid_citations_and_codes_outside_cited_evidence(final):
+    graph = nx.DiGraph()
+    connect(graph, "Part:P-9070", "REPLACED_BY", "Part:P-9070B")
+    connect(graph, "Part:P-9080", "IS_A", "Component:насос")
+    community = Community(0, list(graph), "P-9070 снята; замена P-9070B.")
+    llm = FakeLLM(['{"answer":"Замена P-9070B.","score":9}', final])
+
+    answer = global_search("Чем заменить P-9070?", KnowledgeBase(graph, [community], {}), llm)
+
+    assert answer.refused and not answer.sources
+    assert len(llm.requests) == 2
+
+
+def test_global_rejects_a_cited_relation_that_disagrees_with_the_graph():
+    graph = nx.DiGraph()
+    connect(graph, "Part:P-9070", "SUPPLIED_BY", "Supplier:Старый")
+    connect(graph, "Part:P-9070B", "SUPPLIED_BY", "Supplier:Новый")
+    community = Community(0, list(graph), "P-9070B -SUPPLIED_BY-> Старый")
+    llm = FakeLLM(
+        [
+            '{"answer":"Старый поставщик.","score":9}',
+            cited_response("Поставщик P-9070B — Старый.", [1]),
+        ]
+    )
+
+    answer = global_search("Кто поставляет P-9070B?", KnowledgeBase(graph, [community], {}), llm)
+
+    assert answer.refused and not answer.sources
+    assert len(llm.requests) == 2
+
+
+def test_global_rejects_a_count_table_that_does_not_match_its_scope():
+    graph = nx.DiGraph()
+    connect(graph, "Model:GS-610", "BELONGS_TO", "ProductLine:Север")
+    connect(graph, "Model:GS-610", "FAILED", "Component:насос", weight=4)
+    summary = "Отказы узлов, Север | насос: 40"
+    llm = FakeLLM(['{"answer":"Насос: 40.","score":9}', cited_response("Насос — 40 отказов.", [1])])
+
+    answer = global_search(
+        "Что чаще ломается в Севере?", KnowledgeBase(graph, [Community(0, list(graph), summary)], {}), llm
+    )
+
+    assert answer.refused and not answer.sources
+
+
+def test_global_rejects_stock_claims_without_an_erp_tool_even_for_a_known_part():
+    graph = nx.DiGraph()
+    connect(graph, "Part:P-9070", "REPLACED_BY", "Part:P-9070B")
+    summary = "P-9070 снята; замена P-9070B."
+    llm = FakeLLM(
+        [
+            '{"answer":"Актуальная P-9070B.","score":9}',
+            cited_response("P-9070B есть на складе в Новосибирске.", [1]),
+        ]
+    )
+
+    answer = global_search(
+        "Есть ли замена P-9070 в Новосибирске?", KnowledgeBase(graph, [Community(0, list(graph), summary)], {}), llm
+    )
+
+    assert answer.refused and not answer.sources
+    assert len(llm.requests) == 2
+
+
+def test_global_sends_shared_summary_rows_only_once_and_still_maps_every_community():
+    graph = nx.DiGraph()
+    connect(graph, "Part:P-9070", "REPLACED_BY", "Part:P-9070B")
+    row = "P-9070 снята; замена P-9070B."
+    communities = [Community(i, list(graph), row) for i in range(4)]
+    partial = '{"answer":"Замена P-9070B.","score":9}'
+    llm = FakeLLM([partial] * 4 + [cited_response("Замена P-9070B.", [1])])
+
+    answer = global_search("Чем заменить P-9070?", KnowledgeBase(graph, communities, {}), llm)
+
+    assert not answer.refused and len(llm.requests) == 5
+    assert all(request["json_schema"] == MAP_SCHEMA for request in llm.requests[:4])
+    content = llm.requests[-1]["messages"][-1]["content"]
+    partials, rows = content.split("Частичные ответы:\n", 1)[1].split("\nПодтверждения:\n", 1)
+    answers = json.loads(partials)
+    assert len(answers) == 4
+    assert rows == f"1. {row}"
+    assert all(item["evidence_ids"] == [1] for item in answers)
+
+
+def test_global_cannot_copy_the_supplier_of_an_old_part_to_the_current_part():
+    graph = nx.DiGraph()
+    connect(graph, "Part:P-9070", "SUPPLIED_BY", "Supplier:Старый", source="old.md#0")
+    connect(graph, "Part:P-9070", "REPLACED_BY", "Part:P-9070B", source="replacement.md#0")
+    connect(graph, "Part:P-9070B", "SUPPLIED_BY", "Supplier:Новый", source="new.md#0")
+    summary = "P-9070 -SUPPLIED_BY-> Старый\nP-9070 снята; замена P-9070B.\nP-9070B -SUPPLIED_BY-> Новый"
+    llm = FakeLLM(
+        [
+            '{"answer":"Поставщик актуальной детали P-9070B — Старый.","score":8}',
+            cited_response("Поставщик актуальной детали P-9070B — Старый.", [1, 2, 3]),
+        ]
+    )
+
+    answer = global_search(
+        "Кто текущий поставщик замены P-9070?", KnowledgeBase(graph, [Community(0, list(graph), summary)], {}), llm
+    )
+
+    assert answer.refused and not answer.sources
+    assert len(llm.requests) == 2
+
+
+def test_global_accepts_the_explicit_supplier_of_the_final_replacement():
+    graph = nx.DiGraph()
+    connect(graph, "Part:P-9070", "SUPPLIED_BY", "Supplier:Старый", source="old.md#0")
+    connect(graph, "Part:P-9070", "REPLACED_BY", "Part:P-9070B", source="replacement.md#0")
+    connect(graph, "Part:P-9070B", "SUPPLIED_BY", "Supplier:Новый", source="new.md#0")
+    summary = "P-9070 -SUPPLIED_BY-> Старый\nP-9070 снята; замена P-9070B.\nP-9070B -SUPPLIED_BY-> Новый"
+    llm = FakeLLM(
+        [
+            '{"answer":"Поставщик актуальной детали P-9070B — Новый.","score":8}',
+            cited_response("Поставщик актуальной детали P-9070B — Новый.", [2, 3]),
+        ]
+    )
+
+    answer = global_search(
+        "Кто текущий поставщик замены P-9070?", KnowledgeBase(graph, [Community(0, list(graph), summary)], {}), llm
+    )
+
+    assert not answer.refused and answer.sources == ["new.md", "replacement.md"]
+    assert len(llm.requests) == 2
+
+
+def test_local_can_confirm_an_unchanged_supplier_after_a_part_replacement():
+    graph = nx.DiGraph()
+    connect(graph, "Part:P-9070", "SUPPLIED_BY", "Supplier:Поставщик")
+    connect(graph, "Part:P-9070", "REPLACED_BY", "Part:P-9070B")
+    connect(graph, "Part:P-9070B", "SUPPLIED_BY", "Supplier:Поставщик")
+    llm = FakeLLM([cited_response("Текущий поставщик P-9070B — Поставщик.", [1, 2, 3])])
+
+    answer = local_search("Кто текущий поставщик замены P-9070?", KnowledgeBase(graph, [], {}), llm)
+
+    assert not answer.refused
+    assert len(llm.requests) == 1
+
+
+def test_local_cannot_say_an_order_was_created_without_an_order_tool():
+    graph = nx.DiGraph()
+    connect(graph, "Part:P-9070", "REPLACED_BY", "Part:P-9070B")
+    llm = FakeLLM([cited_response("Заказ создан на P-9070B.", [1])] * 2)
+
+    answer = local_search("Закажи замену P-9070", KnowledgeBase(graph, [], {}), llm)
+
+    assert answer.refused and "Заказ создан" not in answer.text
+    assert len(llm.requests) == 2
+
+
+def test_plain_text_client_uses_the_same_validation_and_conservative_sources():
+    from assistant.infra.llm import LLMResponse
+
+    class PlainClient:
+        def __init__(self, responses):
+            self.responses = iter(responses)
+
+        def chat(self, messages, **kwargs):
+            return LLMResponse(next(self.responses))
+
+    graph = nx.DiGraph()
+    connect(graph, "Part:P-9070", "REPLACED_BY", "Part:P-9070B", source="bulletin.md#0")
+    graph.edges["Part:P-9070", "Part:P-9070B"]["sources"].append("manual.md#0")
+    kb = KnowledgeBase(graph, [Community(0, list(graph), "P-9070 снята; замена P-9070B.")], {})
+
+    local = local_search("Чем заменить P-9070?", kb, PlainClient(["Нужна P-9070B."]))
+    assert not local.refused and local.sources == ["bulletin.md", "manual.md"]
+    partial = '{"answer":"Замена P-9070B.","score":9}'
+    global_answer = global_search("Чем заменить P-9070?", kb, PlainClient([partial, "P-9070B есть на складе."]))
+    assert global_answer.refused and not global_answer.sources
+    unsupported = global_search("Чем заменить P-9070?", kb, PlainClient([partial, "Нужна P-9999."]))
+    assert unsupported.refused and not unsupported.sources
+
+
+@pytest.mark.parametrize(
+    "claim",
+    [
+        "На складе в Казани есть P-9070B.",
+        "P-9070B в наличии.",
+        "P-9070B нет на складе в Казани.",
+        "Цена не указана, но P-9070B есть на складе в Казани.",
+        "Цена: 2630",
+        "Стоимость составляет 2630",
+        "Данных о цене нет; заказ создан на P-9070B.",
+    ],
+)
+@pytest.mark.parametrize("mode", ["local", "global"])
+def test_search_cannot_confirm_any_stock_status_or_unitless_price_without_erp(claim, mode):
+    graph = nx.DiGraph()
+    connect(graph, "Part:P-9070", "REPLACED_BY", "Part:P-9070B")
+    community = Community(0, list(graph), "P-9070 снята; замена P-9070B.")
+    kb = KnowledgeBase(graph, [community], {})
+    final = cited_response(claim, [1])
+    if mode == "local":
+        answer = local_search("Чем заменить P-9070?", kb, FakeLLM([final, final]))
+    else:
+        answer = global_search("Чем заменить P-9070?", kb, FakeLLM(['{"answer":"Замена P-9070B.","score":9}', final]))
+    assert answer.refused
+    assert claim not in answer.text
+
+
+def test_plain_global_does_not_treat_a_graph_disproved_summary_as_code_evidence():
+    graph = nx.DiGraph()
+    connect(graph, "Part:P-9070", "REPLACED_BY", "Part:P-9070B", source="bulletin.md#0")
+    community = Community(0, list(graph), "P-9070 снята; замена P-9080.")
+    llm = FakeLLM(['{"answer":"Замена P-9080.","score":9}', "Нужна P-9080."])
+
+    answer = global_search("Чем заменить P-9070?", KnowledgeBase(graph, [community], {}), llm)
+
+    assert answer.refused and not answer.sources
+    assert len(llm.requests) == 2
+
+
+@pytest.mark.parametrize("mode", ["local", "global"])
+def test_search_can_say_that_stock_information_is_missing(mode):
+    graph = nx.DiGraph()
+    connect(graph, "Part:P-9070", "REPLACED_BY", "Part:P-9070B")
+    community = Community(0, list(graph), "P-9070 снята; замена P-9070B.")
+    kb = KnowledgeBase(graph, [community], {})
+    text = "Актуальная замена P-9070B; сведений о наличии на складе в Казани нет."
+    final = cited_response(text, [1])
+    if mode == "local":
+        answer = local_search("Какая замена P-9070 и есть ли она в Казани?", kb, FakeLLM([final]))
+    else:
+        answer = global_search(
+            "Какая замена P-9070 и есть ли она в Казани?",
+            kb,
+            FakeLLM(['{"answer":"Замена P-9070B.","score":9}', final]),
+        )
+    assert not answer.refused and answer.text == text

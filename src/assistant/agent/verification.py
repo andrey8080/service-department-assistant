@@ -12,6 +12,13 @@ _STOCK = re.compile(rf"({_NUMBER})\s*(?:шт\w*|единиц\w*)", re.IGNORECASE
 _NAMED_PRICE = re.compile(rf"(?:цен\w*|стоимост\w*|стоит)\s*[:=]?\s*({_NUMBER})", re.IGNORECASE)
 _NAMED_STOCK = re.compile(rf"(?:остаток|в наличии|на складе)\s*[:=]?\s*({_NUMBER})", re.IGNORECASE)
 _ORDER_ID = re.compile(r"\bSO-\d+\b", re.IGNORECASE)
+_ORDER_COUNT = re.compile(
+    r"(?:количеств\w*|закаж\w*|заказ(?:ать)?(?:\s+на)?)\s*[:=]?\s*$", re.IGNORECASE
+)
+_OTHER_UNIT = re.compile(
+    r"\s*(?:руб\w*|₽|р\.|%|час\w*|минут\w*|секунд\w*|дн\w*|день\b|дней\b|сут\w*|:\d)",
+    re.IGNORECASE,
+)
 _WORD_COUNTS = {
     "одну": 1,
     "один": 1,
@@ -41,16 +48,16 @@ def requested_quantities(question: str) -> set[int]:
         if value <= 0 or value != value.to_integral_value():
             continue
         units = re.match(r"\s*(?:шт\w*|единиц\w*)", question[match.end() :], re.IGNORECASE)
-        order = re.search(
-            r"(?:количеств\w*|закаж\w*|заказ(?:ать)?)\s*[:=]?\s*$", question[: match.start()], re.IGNORECASE
-        )
-        if units or order:
+        order = _ORDER_COUNT.search(question[: match.start()])
+        if units or (order and not _OTHER_UNIT.match(question[match.end() :])):
             found.add(int(value))
     for word, count in _WORD_COUNTS.items():
-        if re.search(rf"\b{word}\s+(?:шт\w*|единиц\w*)", question, re.IGNORECASE):
-            found.add(count)
-        if re.search(rf"\bзакаж\w*\s+{word}\b", question, re.IGNORECASE):
-            found.add(count)
+        for match in re.finditer(rf"\b{word}\b", question, re.IGNORECASE):
+            suffix = question[match.end() :]
+            units = re.match(r"\s*(?:шт\w*|единиц\w*)", suffix, re.IGNORECASE)
+            order = _ORDER_COUNT.search(question[: match.start()])
+            if units or (order and not _OTHER_UNIT.match(suffix)):
+                found.add(count)
     return found
 
 

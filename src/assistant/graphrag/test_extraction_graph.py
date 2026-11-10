@@ -174,7 +174,7 @@ def test_repair_does_not_authorize_a_code_missing_from_the_document():
 
     result = extract_chunk(ASSEMBLY, llm)
 
-    assert not result.relations
+    assert result.relations == [Relation(Entity("Part", "P-1042"), "IS_A", Entity("Component", "пусковое реле"))]
     assert all(entity.name != "P-7777" for entity in result.entities)
     assert result.dropped == 2 and len(llm.requests) == 2
 
@@ -255,6 +255,166 @@ def test_supplier_is_not_requested_when_document_does_not_name_one():
 
     assert not any(relation.type == "SUPPLIED_BY" for relation in result.relations)
     assert len(llm.requests) == 1
+
+
+def document_link_response(kind, start, end, reversed_types=False):
+    types = {"BELONGS_TO": ("Model", "ProductLine"), "FIXED_BY": ("ErrorCode", "Procedure")}
+    start_type, end_type = types[kind]
+    if reversed_types:
+        start_type, end_type = end_type, start_type
+        start, end = end, start
+    return json.dumps(
+        {
+            "entities": [],
+            "relations": [
+                {
+                    "subject_type": start_type,
+                    "subject": start,
+                    "type": kind,
+                    "object_type": end_type,
+                    "object": end,
+                }
+            ],
+        },
+        ensure_ascii=False,
+    )
+
+
+MEMBERSHIP = Chunk("equipment.md#0", "equipment.md", "Витрина ar 650 входит в линейку «Арктика».")
+REGULATION = Chunk("repair.md#0", "repair.md", "Регламент sp 250 применяется при ошибке Е 35.")
+
+
+@pytest.mark.parametrize(
+    "chunk,kind,start,end",
+    [
+        (MEMBERSHIP, "BELONGS_TO", "AR-650", "Арктика"),
+        (REGULATION, "FIXED_BY", "E-35", "SP-250"),
+    ],
+)
+def test_missing_explicit_document_link_gets_one_targeted_retry(chunk, kind, start, end):
+    llm = FakeLLM(['{"entities": [], "relations": []}', document_link_response(kind, start, end)])
+
+    result = extract_chunk(chunk, llm)
+
+    assert [(r.subject.name, r.type, r.object.name) for r in result.relations] == [(start, kind, end)]
+    assert len(llm.requests) == 2
+    feedback = llm.requests[1]["messages"][1]["content"]
+    assert chunk.text in feedback and f"{start} -{kind}-> {end}" in feedback
+    expected = json.loads(document_link_response(kind, start, end))["relations"][0]
+    assert json.dumps(expected, ensure_ascii=False) in feedback
+
+
+@pytest.mark.parametrize("repaired", [True, False])
+def test_model_self_link_is_repaired_by_the_model_or_dropped_after_two_calls(repaired):
+    chunk = Chunk("equipment.md#0", "equipment.md", "Холодильник GS-640 входит в линейку «Гольфстрим».")
+    wrong = json.loads(document_link_response("BELONGS_TO", "GS-640", "GS-640"))
+    wrong["relations"][0]["object_type"] = "Model"
+    wrong = json.dumps(wrong)
+    correct = document_link_response("BELONGS_TO", "GS-640", "Гольфстрим")
+    llm = FakeLLM([wrong, correct if repaired else wrong])
+
+    result = extract_chunk(chunk, llm)
+
+    feedback = llm.requests[1]["messages"][1]["content"]
+    assert '"object_type": "ProductLine"' in feedback and '"object": "Гольфстрим"' in feedback
+    assert len(llm.requests) == 2
+    if repaired:
+        assert result.relations == [
+            Relation(Entity("Model", "GS-640"), "BELONGS_TO", Entity("ProductLine", "Гольфстрим"))
+        ]
+        assert result.dropped == 0
+    else:
+        assert not result.relations and result.dropped == 1
+
+
+@pytest.mark.parametrize("wrong_line", ["Бриз", "Гольфстрим"])
+def test_membership_with_another_vocabulary_line_is_retried_and_rejected(wrong_line):
+    wrong = document_link_response("BELONGS_TO", "AR-650", wrong_line)
+    llm = FakeLLM([wrong, wrong])
+
+    result = extract_chunk(MEMBERSHIP, llm)
+
+    assert not result.relations and result.dropped == 1
+    assert len(llm.requests) == 2
+
+
+def test_correct_membership_survives_a_repair_that_omits_it():
+    chunk = Chunk("equipment.md#0", "equipment.md", MEMBERSHIP.text + "\nРегламент SP-250 применяется при ошибке E-35.")
+    llm = FakeLLM(
+        [
+            document_link_response("BELONGS_TO", "AR-650", "Арктика"),
+            document_link_response("FIXED_BY", "E-35", "SP-250"),
+        ]
+    )
+
+    result = extract_chunk(chunk, llm)
+
+    assert {(r.subject.name, r.type, r.object.name) for r in result.relations} == {
+        ("AR-650", "BELONGS_TO", "Арктика"),
+        ("E-35", "FIXED_BY", "SP-250"),
+    }
+    assert result.dropped == 0 and len(llm.requests) == 2
+
+
+def test_reversed_regulation_relation_is_normalized_only_when_the_text_confirms_it():
+    llm = FakeLLM([document_link_response("FIXED_BY", "E-35", "SP-250", reversed_types=True)])
+
+    result = extract_chunk(REGULATION, llm)
+
+    assert result.relations == [Relation(Entity("ErrorCode", "E-35"), "FIXED_BY", Entity("Procedure", "SP-250"))]
+    assert result.dropped == 0 and len(llm.requests) == 1
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Регламент SP-250 не применяется при ошибке E-35.",
+        "В документе упомянуты SP-250 и E-35 без описания связи.",
+        "Регламент SP-250 применяется при ошибке E-35 или E-36.",
+    ],
+)
+def test_unsupported_regulation_direction_is_filtered(text):
+    response = document_link_response("FIXED_BY", "E-35", "SP-250", reversed_types=True)
+    llm = FakeLLM([response, response])
+
+    result = extract_chunk(Chunk("repair.md#0", "repair.md", text), llm)
+
+    assert not result.relations and result.dropped == 1 and len(llm.requests) == 2
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Витрина AR-650 не входит в линейку «Арктика».",
+        "Витрина AR-650 не   входит в линейку «Арктика».",
+        "В руководстве упомянуты AR-650 и линейка «Арктика».",
+        "Витрины AR-650 и AR-660 входят в линейку «Арктика».",
+        "Витрина AR-650 входит в линейку «Арктика» или «Бриз».",
+        "Витрина AR-650 входит в линейку «Арктика». Витрина AR-650 входит в линейку «Бриз».",
+    ],
+)
+def test_no_completeness_retry_for_ambiguous_or_negative_membership(text):
+    llm = FakeLLM(['{"entities": [], "relations": []}'])
+
+    result = extract_chunk(Chunk("equipment.md#0", "equipment.md", text), llm)
+
+    assert not result.relations and len(llm.requests) == 1
+
+
+def test_an_explicit_link_is_never_created_without_a_model_relation():
+    llm = FakeLLM(['{"entities": [], "relations": []}', '{"entities": [], "relations": []}'])
+
+    result = extract_chunk(MEMBERSHIP, llm)
+
+    assert not result.entities and not result.relations and len(llm.requests) == 2
+
+
+def test_complete_document_link_needs_one_call():
+    llm = FakeLLM([document_link_response("BELONGS_TO", "AR-650", "Арктика")])
+
+    result = extract_chunk(MEMBERSHIP, llm)
+
+    assert len(result.relations) == 1 and result.dropped == 0 and len(llm.requests) == 1
 
 
 def replacement_response(old, new):
@@ -365,6 +525,16 @@ def test_direction_check_never_adds_a_relation_missing_from_the_model_response()
 
     assert not result.relations and not result.entities
     assert len(llm.requests) == 1
+
+
+def test_a_part_cannot_replace_itself():
+    llm = FakeLLM([replacement_response("P-9876C", "P-9876C")])
+
+    result = extract_chunk(REPLACEMENT, llm)
+
+    assert [r.type for r in result.relations] == ["SUPPLIED_BY"]
+    assert result.dropped == 1 and len(llm.requests) == 1
+    assert build_graph([result]).graph["conflicts"] == 0
 
 
 def test_repeated_chunk_does_not_increase_edge_weight():

@@ -6,7 +6,7 @@ import re
 from pydantic import BaseModel, StrictStr, ValidationError, field_validator
 
 from assistant.infra.config import vocabulary
-from assistant.infra.grounding import CODE_TYPES, canonical_name, code_type, find_codes
+from assistant.infra.grounding import CODE_TYPES, canonical_name, code_type, find_codes, find_names
 from assistant.infra.llm import LLMClient
 from assistant.infra.schemas import (
     ENTITY_TYPES,
@@ -58,6 +58,41 @@ class _Extraction(BaseModel):
     relations: list[_RelationRow]
 
 
+def _document_links(text: str, names: dict[str, list[str]]) -> dict[str, set[tuple[str, str]]]:
+    links: dict[str, set[tuple[str, str]]] = {"BELONGS_TO": set(), "FIXED_BY": set()}
+    for sentence in re.split(r"[.!?\n]+", text):
+        membership = re.search(r"\bвходит\s+в\s+линейку\s+(.+)", sentence, re.I)
+        models = [code for code in find_codes(sentence) if code_type(code) == "Model"]
+        if membership and len(models) == 1 and not re.search(r"\bне\s+$", sentence[: membership.start()], re.I):
+            lines = [name for kind, name in find_names(membership.group(1), names) if kind == "ProductLine"]
+            if len(lines) == 1:
+                links["BELONGS_TO"].add((models[0], lines[0]))
+        procedure = re.search(r"\bрегламент\s+(.+?)\s+применяется\s+при\s+ошибке\s+(.+)", sentence, re.I)
+        if procedure and not re.search(r"\bне\b", procedure.group(1), re.I):
+            procedures = find_codes(procedure.group(1))
+            errors = find_codes(procedure.group(2))
+            if (
+                len(procedures) == len(errors) == 1
+                and code_type(procedures[0]) == "Procedure"
+                and code_type(errors[0]) == "ErrorCode"
+            ):
+                links["FIXED_BY"].add((errors[0], procedures[0]))
+    return {
+        kind: {(start, end) for start, end in pairs if sum(a == start for a, _ in pairs) == 1}
+        for kind, pairs in links.items()
+    }
+
+
+def _row_ends(row: _RelationRow, names: dict[str, list[str]]) -> tuple[str | None, str | None]:
+    ends = []
+    for kind, raw in ((row.subject_type, row.subject), (row.object_type, row.object)):
+        if kind in CODE_TYPES:
+            found = find_codes(raw)
+            raw = found[0] if len(found) == 1 else raw
+        ends.append(canonical_name(kind, raw, names))
+    return ends[0], ends[1]
+
+
 def _replacement_directions(text: str) -> set[tuple[str, str]]:
     """Однозначные направления из фраз о снятии детали и её замене."""
     sentences = [part.strip() for part in re.split(r"[.!?\n]+", text) if part.strip()]
@@ -76,7 +111,12 @@ def _replacement_directions(text: str) -> set[tuple[str, str]]:
     return {(old, new) for old, new in pairs if (new, old) not in pairs}
 
 
-def _schema_issues(parsed: _Extraction, chunk: Chunk) -> list[str]:
+def _schema_issues(
+    parsed: _Extraction,
+    chunk: Chunk,
+    names: dict[str, list[str]],
+    document_links: dict[str, set[tuple[str, str]]],
+) -> list[str]:
     issues = []
     codes = {code: code_type(code) for code in find_codes(chunk.text)}
     mentions = [(row.type, row.name) for row in parsed.entities]
@@ -89,6 +129,30 @@ def _schema_issues(parsed: _Extraction, chunk: Chunk) -> list[str]:
         found = find_codes(name)
         if len(found) == 1 and found[0] in codes and kind != codes[found[0]]:
             issues.append(f"{found[0]} имеет тип {codes[found[0]]}, а не {kind}.")
+    for kind, expected in document_links.items():
+        present = {
+            _row_ends(row, names)
+            for row in parsed.relations
+            if row.type == kind and (row.subject_type, row.object_type) == RELATION_SIGNATURES[kind]
+        }
+        for start, end in sorted(expected - present):
+            subject_type, object_type = RELATION_SIGNATURES[kind]
+            example = {
+                "entities": [{"type": subject_type, "name": start}, {"type": object_type, "name": end}],
+                "relations": [{
+                    "subject_type": subject_type,
+                    "subject": start,
+                    "type": kind,
+                    "object_type": object_type,
+                    "object": end,
+                }],
+            }
+            issues.append(
+                f"Документ явно подтверждает {start} -{kind}-> {end}. "
+                "Начни ответ с этой связи в следующем формате, сохрани типы и имена обоих концов:\n"
+                + json.dumps(example, ensure_ascii=False)
+                + "\nСохрани также все остальные подтверждённые факты документа; не ограничивай ответ примером."
+            )
     if "состав узлов" in chunk.text.lower() and "Model" in codes.values():
         linked = {code for row in parsed.relations if row.type == "HAS_PART" for code in find_codes(row.object)}
         missing = sorted(code for code, kind in codes.items() if kind == "Part" and code not in linked)
@@ -168,6 +232,9 @@ def extract_chunk(chunk: Chunk, llm: LLMClient) -> ExtractionResult:
         {"role": "user", "content": chunk.text},
     ]
     result = ExtractionResult(chunk.chunk_id, chunk.doc_id)
+    document_links = _document_links(chunk.text, names)
+    confirmed = {(code_type(code), code) for code in find_codes(chunk.text)} | set(find_names(chunk.text, names))
+    retained: list[_RelationRow] = []
     parsed = None
     for attempt in range(2):
         response = llm.chat(messages, json_schema=EXTRACTION_SCHEMA, max_tokens=4096)
@@ -180,8 +247,25 @@ def extract_chunk(chunk: Chunk, llm: LLMClient) -> ExtractionResult:
         else:
             if attempt and not candidate.entities and not candidate.relations:
                 break
+            for row in candidate.relations:
+                if row.type == "FIXED_BY" and (row.subject_type, row.object_type) == ("Procedure", "ErrorCode"):
+                    procedure, error = _row_ends(row, names)
+                    if (error, procedure) in document_links["FIXED_BY"]:
+                        row.subject_type, row.object_type = row.object_type, row.subject_type
+                        row.subject, row.object = row.object, row.subject
+                start, end = _row_ends(row, names)
+                expected = document_links.get(row.type, set())
+                contradicted = any(a == start for a, _ in expected) and (start, end) not in expected
+                if (
+                    (row.subject_type, row.object_type) == RELATION_SIGNATURES[row.type]
+                    and (row.subject_type, start) in confirmed
+                    and (row.object_type, end) in confirmed
+                    and not contradicted
+                    and not (row.type == "REPLACED_BY" and start == end)
+                ):
+                    retained.append(row)
             parsed = candidate
-            issues = _schema_issues(candidate, chunk)
+            issues = _schema_issues(candidate, chunk, names, document_links)
             if attempt or not issues:
                 break
             feedback = (
@@ -191,6 +275,7 @@ def extract_chunk(chunk: Chunk, llm: LLMClient) -> ExtractionResult:
         messages = [messages[0], {"role": "user", "content": chunk.text + "\n\n" + feedback}]
     if parsed is None:
         return result
+    parsed.relations.extend(retained)
 
     codes = set(find_codes(chunk.text))
     replacements = _replacement_directions(chunk.text)
@@ -219,6 +304,13 @@ def extract_chunk(chunk: Chunk, llm: LLMClient) -> ExtractionResult:
             continue
         relation = Relation(subject, row.type, obj)
         if not relation.matches_schema():
+            result.dropped += 1
+            continue
+        if row.type == "REPLACED_BY" and subject == obj:
+            result.dropped += 1
+            continue
+        expected = document_links.get(row.type, set())
+        if any(start == subject.name for start, _ in expected) and (subject.name, obj.name) not in expected:
             result.dropped += 1
             continue
         if row.type == "REPLACED_BY" and (obj.name, subject.name) in replacements:

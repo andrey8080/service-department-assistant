@@ -17,6 +17,32 @@ def connect(graph, start, relation, end, *, weight=1, source="manual.md#0"):
     graph.add_edge(start, end, type=relation, weight=weight, sources=[source])
 
 
+def summary_response(*, original_parts=None, replacements=None, failure_counts=None, facts=None):
+    return json.dumps(
+        {
+            "original_parts": original_parts or [],
+            "replacements": replacements or [],
+            "failure_counts": failure_counts or [],
+            "facts": facts or [],
+        },
+        ensure_ascii=False,
+    )
+
+
+@pytest.fixture
+def summary_graph():
+    graph = nx.DiGraph()
+    connect(graph, "Model:GS-610", "HAS_PART", "Part:P-9070")
+    connect(graph, "Model:GS-610", "BELONGS_TO", "ProductLine:Север")
+    connect(graph, "Model:BZ-610", "HAS_PART", "Part:P-9070B")
+    connect(graph, "Model:BZ-610", "BELONGS_TO", "ProductLine:Юг")
+    connect(graph, "Part:P-9070", "REPLACED_BY", "Part:P-9070B")
+    connect(graph, "Part:P-9070B", "REPLACED_BY", "Part:P-9070C")
+    connect(graph, "Model:GS-610", "FAILED", "Component:насос", weight=4)
+    connect(graph, "Model:GS-610", "FAILED", "Component:контроллер", weight=1)
+    return graph
+
+
 def test_empty_graph_and_isolated_nodes():
     assert detect_communities(nx.DiGraph()) == []
     graph = nx.DiGraph()
@@ -63,7 +89,8 @@ def test_summary_counts_failures_for_each_model_and_line():
     summary = summarize_community(Community(0, ["Component:пусковое реле"]), graph, llm)
 
     assert len(llm.requests) == 1
-    assert len(summary.split()) == 150
+    assert summary == "Сводка не сформирована: ответ модели не прошёл проверку."
+    assert 0 < len(summary.split()) <= 150
     payload = json.loads(llm.requests[0]["messages"][-1]["content"])
     assert payload["failure_counts_by_model"] == {"AR-210: пусковое реле": 37, "AR-220: пусковое реле": 5}
     assert payload["failure_counts_by_line"] == {"Арктика": {"пусковое реле": 42}}
@@ -101,6 +128,349 @@ def test_summary_contains_internal_facts_and_not_unrelated_edges():
     payload = json.loads(llm.requests[0]["messages"][-1]["content"])
     assert payload["facts"] == ["P-1042 -REPLACED_BY-> P-1042B"]
     assert payload["failure_counts_by_model"] == {}
+
+
+def test_summary_has_complete_counts_for_relevant_line_without_mixing_other_lines():
+    graph = nx.DiGraph()
+    connect(graph, "Model:AR-410", "FAILED", "Component:контроллер", weight=3)
+    connect(graph, "Model:AR-420", "FAILED", "Component:компрессор", weight=9)
+    for model in ("AR-410", "AR-420"):
+        connect(graph, f"Model:{model}", "BELONGS_TO", "ProductLine:Север")
+    connect(graph, "Model:BZ-410", "FAILED", "Component:вентилятор", weight=90)
+    connect(graph, "Model:BZ-410", "BELONGS_TO", "ProductLine:Юг")
+    llm = FakeLLM(["Север: контроллер=3, компрессор=9; AR-410=3, AR-420=9."])
+
+    summarize_community(Community(0, ["Component:контроллер"]), graph, llm)
+
+    payload = json.loads(llm.requests[0]["messages"][-1]["content"])
+    assert payload["failure_counts_by_line"] == {"Север": {"контроллер": 3}}
+    assert payload["model_failure_totals"] == {}
+    assert payload["full_failure_counts_by_line"] == {
+        "Север": {"by_component": {"контроллер": 3, "компрессор": 9}, "by_model": {"AR-410": 3, "AR-420": 9}},
+    }
+    assert "Юг" not in json.dumps(payload, ensure_ascii=False)
+    assert "AR-410 -BELONGS_TO-> Север" in payload["boundary_facts"]
+
+
+def test_summary_renders_confirmed_model_records_without_mixing_them(summary_graph):
+    response = summary_response(
+        original_parts=[
+            {"part": "P-9070", "model": "GS-610", "product_lines": ["Север"]},
+            {"part": "P-9070B", "model": "BZ-610", "product_lines": ["Юг"]},
+        ],
+        replacements=[{"old": "P-9070", "new": "P-9070B"}, {"old": "P-9070B", "new": "P-9070C"}],
+        failure_counts=[
+            {"product_line": "Север", "by_component": {"насос": 4, "контроллер": 1}, "by_model": {"GS-610": 5}},
+        ],
+        facts=["GS-610 -HAS_PART-> P-9070"],
+    )
+    llm = FakeLLM([response])
+
+    summary = summarize_community(Community(0, sorted(summary_graph)), summary_graph, llm)
+
+    lines = summary.splitlines()
+    assert any("Север" in line and "GS-610" in line and "| P-9070" in line for line in lines)
+    assert any("Юг" in line and "BZ-610" in line and "| P-9070B" in line for line in lines)
+    assert "P-9070 снята; замена P-9070B" in summary
+    assert "P-9070B снята; замена P-9070C" in summary
+    assert any("Отказы узлов" in line and "Север" in line and "насос: 4" in line for line in lines)
+    assert any("Всего отказов моделей" in line and "Север" in line and "GS-610: 5" in line for line in lines)
+    assert "GS-610 -HAS_PART-> P-9070" in lines
+    assert 0 < len(summary.split()) <= 150
+    assert len(llm.requests) == 1
+    assert llm.requests[0]["json_schema"]
+
+
+@pytest.mark.parametrize(
+    "record",
+    [
+        {"part": "P-9070B", "model": "GS-610", "product_lines": ["Север"]},
+        {"part": "P-9070", "model": "GS-610", "product_lines": ["Юг"]},
+    ],
+)
+def test_summary_rejects_wrong_original_part_or_line(summary_graph, record):
+    llm = FakeLLM([summary_response(original_parts=[record])])
+
+    summary = summarize_community(Community(0, sorted(summary_graph)), summary_graph, llm)
+
+    assert summary == "Сводка не сформирована: ответ модели не прошёл проверку."
+    assert len(llm.requests) == 1
+
+
+def test_summary_rejects_a_shortcut_instead_of_two_replacements(summary_graph):
+    llm = FakeLLM([summary_response(replacements=[{"old": "P-9070", "new": "P-9070C"}])])
+
+    summary = summarize_community(Community(0, sorted(summary_graph)), summary_graph, llm)
+
+    assert summary == "Сводка не сформирована: ответ модели не прошёл проверку."
+    assert len(llm.requests) == 1
+
+
+@pytest.mark.parametrize(
+    "record",
+    [
+        {"product_line": "Север", "by_component": {"насос": 5, "контроллер": 1}, "by_model": {"GS-610": 4}},
+        {"product_line": "Север", "by_component": {"насос": 4}, "by_model": {"GS-610": 5}},
+        {"product_line": "Юг", "by_component": {"насос": 4, "контроллер": 1}, "by_model": {"GS-610": 5}},
+        {"product_line": "Север", "by_component": {"насос": 4, "контроллер": True}, "by_model": {"GS-610": 5}},
+    ],
+)
+def test_summary_rejects_changed_or_incomplete_failure_counts(summary_graph, record):
+    llm = FakeLLM([summary_response(failure_counts=[record])])
+
+    summary = summarize_community(Community(0, sorted(summary_graph)), summary_graph, llm)
+
+    assert summary == "Сводка не сформирована: ответ модели не прошёл проверку."
+    assert len(llm.requests) == 1
+
+
+def test_summary_rejects_an_unsupported_fact_even_when_codes_exist(summary_graph):
+    llm = FakeLLM([summary_response(facts=["BZ-610 -HAS_PART-> P-9070"])])
+
+    summary = summarize_community(Community(0, sorted(summary_graph)), summary_graph, llm)
+
+    assert summary == "Сводка не сформирована: ответ модели не прошёл проверку."
+    assert len(llm.requests) == 1
+
+
+def test_summary_does_not_add_rows_that_the_model_omitted(summary_graph):
+    llm = FakeLLM([summary_response(replacements=[{"old": "P-9070", "new": "P-9070B"}])])
+
+    summary = summarize_community(Community(0, sorted(summary_graph)), summary_graph, llm)
+
+    assert "P-9070 снята; замена P-9070B" in summary
+    assert "P-9070C" not in summary
+    assert "GS-610" not in summary
+    assert "Север" not in summary
+    assert len(llm.requests) == 1
+
+
+def test_summary_rejects_a_long_valid_record_without_cutting_it():
+    graph = nx.DiGraph()
+    supplier = "Поставщик " + "длинное " * 160
+    connect(graph, "Part:P-9070", "SUPPLIED_BY", f"Supplier:{supplier}")
+    fact = f"P-9070 -SUPPLIED_BY-> {supplier}"
+    llm = FakeLLM([summary_response(facts=[fact])])
+
+    summary = summarize_community(Community(0, ["Part:P-9070"]), graph, llm)
+
+    assert summary == "Сводка не сформирована: ответ модели не прошёл проверку."
+    assert "P-9070" not in summary
+    assert 0 < len(summary.split()) <= 150
+    assert len(llm.requests) == 1
+
+
+def test_summary_limits_extra_facts_without_losing_parts_replacements_or_counts(summary_graph):
+    facts = []
+    for number in range(30):
+        supplier = f"Поставщик оборудования номер {number}"
+        connect(summary_graph, "Part:P-9070C", "SUPPLIED_BY", f"Supplier:{supplier}")
+        facts.append(f"P-9070C -SUPPLIED_BY-> {supplier}")
+    llm = FakeLLM(
+        [
+            summary_response(
+                original_parts=[{"part": "P-9070", "model": "GS-610", "product_lines": ["Север"]}],
+                replacements=[{"old": "P-9070", "new": "P-9070B"}, {"old": "P-9070B", "new": "P-9070C"}],
+                failure_counts=[
+                    {
+                        "product_line": "Север",
+                        "by_component": {"насос": 4, "контроллер": 1},
+                        "by_model": {"GS-610": 5},
+                    }
+                ],
+                facts=facts,
+            )
+        ]
+    )
+
+    summary = summarize_community(Community(0, sorted(summary_graph)), summary_graph, llm)
+
+    assert "Исходная деталь | Север | GS-610 | P-9070" in summary.splitlines()
+    assert "P-9070 снята; замена P-9070B." in summary.splitlines()
+    assert "P-9070B снята; замена P-9070C." in summary.splitlines()
+    assert "Отказы узлов, Север | контроллер: 1; насос: 4" in summary.splitlines()
+    assert "Всего отказов моделей, Север | GS-610: 5" in summary.splitlines()
+    returned_facts = [line for line in summary.splitlines() if " -SUPPLIED_BY-> " in line]
+    assert 0 < len(returned_facts) < len(facts)
+    assert set(returned_facts) <= set(facts)
+    assert len(summary.split()) <= 150
+    assert len(llm.requests) == 1
+
+
+def test_summary_rejects_essential_counts_over_budget_without_shortening_the_table():
+    graph = nx.DiGraph()
+    component = "Узел " + "длинное " * 160
+    connect(graph, "Model:GS-610", "BELONGS_TO", "ProductLine:Север")
+    connect(graph, "Model:GS-610", "FAILED", f"Component:{component}", weight=4)
+    llm = FakeLLM(
+        [
+            summary_response(
+                failure_counts=[
+                    {"product_line": "Север", "by_component": {component: 4}, "by_model": {"GS-610": 4}}
+                ]
+            )
+        ]
+    )
+
+    summary = summarize_community(Community(0, sorted(graph)), graph, llm)
+
+    assert summary == "Сводка не сформирована: ответ модели не прошёл проверку."
+    assert len(llm.requests) == 1
+
+
+def test_summary_still_checks_unsupported_extra_facts_that_would_not_fit(summary_graph):
+    unsupported = "BZ-610 -HAS_PART-> P-9070 " + "неподтверждённое " * 160
+    llm = FakeLLM(
+        [
+            summary_response(
+                replacements=[{"old": "P-9070", "new": "P-9070B"}],
+                facts=[unsupported],
+            )
+        ]
+    )
+
+    summary = summarize_community(Community(0, sorted(summary_graph)), summary_graph, llm)
+
+    assert summary == "Сводка не сформирована: ответ модели не прошёл проверку."
+    assert len(llm.requests) == 1
+
+
+def test_summary_keeps_boundary_relations_and_model_of_replacement_chain():
+    graph = nx.DiGraph()
+    connect(graph, "Model:GS-610", "HAS_PART", "Part:P-9070")
+    connect(graph, "Model:GS-610", "BELONGS_TO", "ProductLine:Север")
+    connect(graph, "Part:P-9070", "REPLACED_BY", "Part:P-9070B")
+    connect(graph, "Part:P-9070B", "REPLACED_BY", "Part:P-9070C")
+    connect(graph, "Part:P-9070B", "IS_A", "Component:насос")
+    connect(graph, "Part:P-9070C", "SUPPLIED_BY", "Supplier:Поставщик")
+    llm = FakeLLM(["P-9070B заменена на P-9070C для GS-610 линейки Север."])
+
+    summarize_community(Community(0, ["Part:P-9070B", "Part:P-9070C"]), graph, llm)
+
+    payload = json.loads(llm.requests[0]["messages"][-1]["content"])
+    assert payload["replacement_context"] == [
+        {"old": "P-9070", "new": "P-9070B"},
+        {"old": "P-9070B", "new": "P-9070C"},
+    ]
+    assert payload["original_parts"] == [{"part": "P-9070", "model": "GS-610", "product_lines": ["Север"]}]
+    assert set(payload["boundary_facts"]) == {
+        "P-9070 -REPLACED_BY-> P-9070B",
+        "P-9070B -IS_A-> насос",
+        "P-9070C -SUPPLIED_BY-> Поставщик",
+        "GS-610 -HAS_PART-> P-9070",
+        "GS-610 -BELONGS_TO-> Север",
+    }
+    assert len(llm.requests) == 1
+
+
+def test_summary_distinguishes_original_parts_of_different_models():
+    graph = nx.DiGraph()
+    connect(graph, "Model:GS-610", "HAS_PART", "Part:P-9070")
+    connect(graph, "Model:GS-610", "BELONGS_TO", "ProductLine:Север")
+    connect(graph, "Model:BZ-610", "HAS_PART", "Part:P-9070B")
+    connect(graph, "Model:BZ-610", "BELONGS_TO", "ProductLine:Юг")
+    connect(graph, "Part:P-9070", "REPLACED_BY", "Part:P-9070B")
+    connect(graph, "Part:P-9070B", "REPLACED_BY", "Part:P-9070C")
+    llm = FakeLLM(["В Севере исходная P-9070, в Юге исходная P-9070B."])
+
+    summarize_community(Community(0, ["Part:P-9070B"]), graph, llm)
+
+    payload = json.loads(llm.requests[0]["messages"][-1]["content"])
+    assert sorted(payload["original_parts"], key=lambda item: item["part"]) == [
+        {"part": "P-9070", "model": "GS-610", "product_lines": ["Север"]},
+        {"part": "P-9070B", "model": "BZ-610", "product_lines": ["Юг"]},
+    ]
+    assert payload["replacement_context"] == [
+        {"old": "P-9070", "new": "P-9070B"},
+        {"old": "P-9070B", "new": "P-9070C"},
+    ]
+
+
+def test_summary_keeps_replacement_branches_as_separate_pairs():
+    graph = nx.DiGraph()
+    connect(graph, "Model:GS-610", "HAS_PART", "Part:P-9070")
+    connect(graph, "Part:P-9070", "REPLACED_BY", "Part:P-9070B")
+    connect(graph, "Part:P-9070", "REPLACED_BY", "Part:P-9070C")
+    llm = FakeLLM(["Для P-9070 есть две замены: P-9070B и P-9070C."])
+
+    summarize_community(Community(0, ["Part:P-9070B"]), graph, llm)
+
+    payload = json.loads(llm.requests[0]["messages"][-1]["content"])
+    assert payload["replacement_context"] == [
+        {"old": "P-9070", "new": "P-9070B"},
+        {"old": "P-9070", "new": "P-9070C"},
+    ]
+    assert payload["original_parts"] == [{"part": "P-9070", "model": "GS-610", "product_lines": []}]
+
+
+def test_summary_restores_full_chain_from_its_last_part():
+    graph = nx.DiGraph()
+    connect(graph, "Model:GS-610", "HAS_PART", "Part:P-9070")
+    connect(graph, "Model:GS-610", "BELONGS_TO", "ProductLine:Север")
+    connect(graph, "Part:P-9070", "REPLACED_BY", "Part:P-9070B")
+    connect(graph, "Part:P-9070B", "REPLACED_BY", "Part:P-9070C")
+    connect(graph, "Model:BZ-610", "HAS_PART", "Part:P-9080")
+    connect(graph, "Part:P-9080", "REPLACED_BY", "Part:P-9080B")
+    llm = FakeLLM(["P-9070 заменена на P-9070B, затем на P-9070C."])
+
+    summarize_community(Community(0, ["Part:P-9070C"]), graph, llm)
+
+    payload = json.loads(llm.requests[0]["messages"][-1]["content"])
+    assert payload["replacement_context"] == [
+        {"old": "P-9070", "new": "P-9070B"},
+        {"old": "P-9070B", "new": "P-9070C"},
+    ]
+    assert payload["original_parts"] == [{"part": "P-9070", "model": "GS-610", "product_lines": ["Север"]}]
+    assert "P-9080" not in json.dumps(payload, ensure_ascii=False)
+    assert "BZ-610" not in json.dumps(payload, ensure_ascii=False)
+    assert len(llm.requests) == 1
+
+
+def test_summary_visits_replacement_cycle_once_without_inventing_original_parts():
+    graph = nx.DiGraph()
+    connect(graph, "Part:P-9070", "REPLACED_BY", "Part:P-9070B")
+    connect(graph, "Part:P-9070B", "REPLACED_BY", "Part:P-9070C")
+    connect(graph, "Part:P-9070C", "REPLACED_BY", "Part:P-9070")
+    llm = FakeLLM(["В заменах найден замкнутый цикл."])
+
+    summarize_community(Community(0, ["Part:P-9070B"]), graph, llm)
+
+    payload = json.loads(llm.requests[0]["messages"][-1]["content"])
+    assert payload["replacement_context"] == [
+        {"old": "P-9070", "new": "P-9070B"},
+        {"old": "P-9070B", "new": "P-9070C"},
+        {"old": "P-9070C", "new": "P-9070"},
+    ]
+    assert payload["original_parts"] == []
+    assert len(llm.requests) == 1
+
+
+def test_summary_does_not_guess_line_from_model_code():
+    graph = nx.DiGraph()
+    connect(graph, "Model:AR-410", "FAILED", "Component:контроллер", weight=2)
+    connect(graph, "Model:AR-410", "HAS_PART", "Part:P-9070")
+    connect(graph, "Part:P-9070", "REPLACED_BY", "Part:P-9070B")
+    llm = FakeLLM(["AR-410: контроллер=2; P-9070 заменена на P-9070B."])
+
+    summarize_community(Community(0, ["Model:AR-410", "Part:P-9070"]), graph, llm)
+
+    payload = json.loads(llm.requests[0]["messages"][-1]["content"])
+    assert payload["full_failure_counts_by_line"] == {}
+    assert payload["original_parts"] == [{"part": "P-9070", "model": "AR-410", "product_lines": []}]
+    assert payload["model_failure_totals"]["AR-410"]["product_lines"] == []
+
+
+def test_summary_bounds_boundary_context():
+    graph = nx.DiGraph()
+    for number in range(300):
+        connect(graph, f"Part:P-{9000 + number}", "SUPPLIED_BY", "Supplier:Поставщик длинное название")
+    llm = FakeLLM(["Поставщик деталей."])
+
+    summarize_community(Community(0, ["Supplier:Поставщик длинное название"]), graph, llm)
+
+    context = json.loads(llm.requests[0]["messages"][-1]["content"])["boundary_facts"]
+    assert 0 < sum(map(len, context)) <= 8000
+    assert len(context) < 300
 
 
 def test_local_search_includes_all_short_paths_and_preserves_edge_direction():

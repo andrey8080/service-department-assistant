@@ -76,16 +76,9 @@ def _answer_review(
     tools: dict[str, Callable[..., dict]],
 ) -> str | None:
     searches = [(name, value) for name, value in results if name in {"search_knowledge", "summarize_topic"}]
-    if not searches or any(step.error for step in steps) or any(value.get("refused") for _, value in searches):
+    latest_errors = {step.tool: step.error for step in steps}
+    if not searches or any(latest_errors.values()):
         return None
-    if "в базе знаний не найдено" in text.lower():
-        return (
-            "В ответе одновременно есть сведения из успешного поиска и отказ. Проверь, к какой части "
-            "исходного вопроса относится отказ. Ответь только на исходный вопрос по результатам инструментов; "
-            "убери пояснения о сведениях, которых пользователь не запрашивал. "
-            "Если данных для запрошенной части действительно недостаточно, сохрани обоснованный отказ. "
-            "Не придумывай факты."
-        )
     if (
         any(word in question.lower() for word in ("регламент", "процедур"))
         and any(name == "summarize_topic" for name, _ in searches)
@@ -102,6 +95,16 @@ def _answer_review(
                 "Перечень деталей и замен не отвечает на этот вопрос. Проверь исходный вопрос через "
                 "search_knowledge. Не угадывай номер регламента; если поиск не подтвердит данные, сообщи об этом."
             )
+    if any(value.get("refused") for _, value in searches):
+        return None
+    if "в базе знаний не найдено" in text.lower():
+        return (
+            "В ответе одновременно есть сведения из успешного поиска и отказ. Проверь, к какой части "
+            "исходного вопроса относится отказ. Ответь только на исходный вопрос по результатам инструментов; "
+            "убери пояснения о сведениях, которых пользователь не запрашивал. "
+            "Если данных для запрошенной части действительно недостаточно, сохрани обоснованный отказ. "
+            "Не придумывай факты."
+        )
     return None
 
 
@@ -119,11 +122,13 @@ def run_agent(
     sources: set[str] = set()
     results: list[tuple[str, dict]] = []
     cache: dict[str, dict] = {}
+    argument_errors: dict[str, list[int]] = {}
     corrections = 0
     search_reminded = False
     answer_reviewed = False
     order_reminded = False
     erp_failed = False
+    answer_style_set = False
 
     def finish(text: str, **kwargs) -> AgentResult:
         if unsupported_facts(text, question, results) or unsupported_erp_claims(text):
@@ -249,14 +254,20 @@ def run_agent(
             if (
                 not error
                 and call.name == "search_knowledge"
-                and _asks_supplier(question)
                 and _asks_current(question)
                 and not _asks_current(args["question"])
+                and (
+                    _asks_supplier(question)
+                    or (not _requests_order(question) and not any(name == "search_knowledge" for name, _ in results))
+                )
             ):
                 error = (
-                    "В исходном вопросе нужна актуальная деталь и её нынешний поставщик. "
-                    "Запрос поиска потерял это условие. Укажи в search_knowledge актуальную деталь "
-                    "с учётом последней замены и её поставщика, а не поставщика старой детали."
+                    "Поисковый запрос потерял условие актуальности из исходного вопроса. "
+                    "Укажи в search_knowledge, что нужна актуальная деталь с учётом всех замен; "
+                    "если спрашивают поставщика, нужен поставщик последней версии."
+                    if _asks_supplier(question)
+                    else "Поисковый запрос потерял условие актуальности. Передай в search_knowledge "
+                    f"исходный вопрос без пересказа: {question}"
                 )
             if not error and "part_id" in args and args["part_id"] not in allowed_codes(question, results):
                 error = "Номер детали нигде не встречался. Сначала вызови search_knowledge."
@@ -278,6 +289,7 @@ def run_agent(
                     return finish(
                         text.strip(), needs_confirmation=True, pending_action={"tool": call.name, "args": args}
                     )
+            validation_error = bool(error)
             value = {"error": error} if error else None
             key = json.dumps([call.name, args], ensure_ascii=False, sort_keys=True)
             if value is None and key in cache:
@@ -306,9 +318,28 @@ def run_agent(
             error = value.get("error")
             steps.append(ToolStep(call.name, args, value, error))
             messages.append(tool_message(call, {key: item for key, item in value.items() if key != "sources"}))
+            if validation_error:
+                argument_errors.setdefault(call.name, []).append(len(messages) - 1)
             if not error:
+                for position in argument_errors.pop(call.name, []):
+                    messages[position] = {
+                        **messages[position],
+                        "content": json.dumps({
+                            "resolved_error": "Ошибка аргументов исправлена последующим "
+                            "успешным вызовом этого инструмента."
+                        }, ensure_ascii=False),
+                    }
                 results.append((call.name, value))
                 sources.update(value.get("sources", []))
+                if not answer_style_set:
+                    messages[0] = {
+                        "role": "system",
+                        "content": SYSTEM + "\nКогда все нужные проверки закончены, ответь в 1–3 предложениях "
+                        "только на исходный вопрос. Не обсуждай цену, наличие, заказ и поставщика, если их "
+                        "не спрашивали. Снятие с производства относится к детали, не к модели оборудования. "
+                        "Не переноси свойства детали на модель.",
+                    }
+                    answer_style_set = True
 
     text = _observations(results)
     if erp_failed:

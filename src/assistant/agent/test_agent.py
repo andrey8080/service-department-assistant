@@ -21,6 +21,82 @@ def call(name, **arguments):
     return LLMResponse("", [ToolCall("test-call", name, arguments)])
 
 
+def test_search_preserves_current_part_requirement_even_without_a_supplier_question():
+    search = Mock(return_value={
+        "answer": "P-9070B", "facts": ["P-9070 -REPLACED_BY-> P-9070B"], "sources": ["bulletin.md"],
+    })
+    llm = FakeLLM([
+        call("search_knowledge", question="деталь насоса для GS-610"),
+        call("search_knowledge", question="актуальная деталь насоса для GS-610"),
+        "Актуальная деталь — P-9070B.",
+    ])
+
+    result = run_agent("Какая деталь сейчас ставится как насос для GS-610?", llm, {"search_knowledge": search})
+
+    search.assert_called_once_with(question="актуальная деталь насоса для GS-610")
+    assert result.answer == "Актуальная деталь — P-9070B." and not result.refused
+    assert len(result.steps) == 2 and "актуальности" in result.steps[0].error
+    assert "1–3 предложениях" not in llm.requests[0]["messages"][0]["content"]
+    assert "1–3 предложениях" in llm.requests[-1]["messages"][0]["content"]
+
+
+def test_verified_current_part_can_be_used_in_a_followup_without_repeating_the_time_qualifier():
+    search = Mock(side_effect=[
+        {"answer": "P-9070B", "facts": ["P-9070 -REPLACED_BY-> P-9070B"]},
+        {"answer": "Новый", "facts": ["P-9070B -SUPPLIED_BY-> Новый"]},
+    ])
+    llm = FakeLLM([
+        call("search_knowledge", question="актуальная деталь насоса для GS-610"),
+        call("search_knowledge", question="поставщик P-9070B"),
+        "Актуальная деталь — P-9070B.",
+    ])
+
+    result = run_agent("Какая деталь сейчас ставится как насос для GS-610?", llm, {"search_knowledge": search})
+
+    assert not result.refused
+    assert search.call_count == 2 and all(not step.error for step in result.steps)
+
+
+def test_recovered_argument_error_does_not_disable_review_of_an_unjustified_refusal():
+    search = Mock(return_value={
+        "answer": "P-9070B", "facts": ["P-9070 -REPLACED_BY-> P-9070B"], "refused": False,
+    })
+    llm = FakeLLM([
+        call("search_knowledge", question="деталь насоса для GS-610"),
+        call("search_knowledge", question="актуальная деталь насоса для GS-610"),
+        "В базе знаний не найдено.",
+        "Актуальная деталь — P-9070B.",
+    ])
+
+    result = run_agent("Какая деталь сейчас ставится как насос для GS-610?", llm, {"search_knowledge": search})
+
+    assert not result.refused and "P-9070B" in result.answer
+    assert search.call_count == 1 and len(llm.requests) == 4
+    assert "успешного поиска" in llm.requests[-1]["messages"][-1]["content"]
+    assert result.steps[0].error and result.steps[0].result["error"]
+    assert any("потерял" in message["content"] for message in llm.requests[1]["messages"] if message["role"] == "tool")
+    assert any("resolved_error" in message["content"] for message in llm.requests[2]["messages"])
+
+
+def test_a_refused_overview_does_not_block_exact_procedure_search():
+    overview = Mock(return_value={"answer": "В базе знаний не найдено", "refused": True})
+    search = Mock(return_value={"answer": "SP-151", "facts": ["E-51 -FIXED_BY-> SP-151"], "refused": False})
+    llm = FakeLLM([
+        call("summarize_topic", question="регламент для насоса"),
+        "В базе знаний не найдено.",
+        call("search_knowledge", question="Какой регламент устраняет отказ насоса?"),
+        "SP-151.",
+    ])
+
+    result = run_agent(
+        "Какой регламент устраняет отказ насоса?", llm,
+        {"summarize_topic": overview, "search_knowledge": search},
+    )
+
+    assert not result.refused and result.answer == "SP-151."
+    assert overview.call_count == 1 and search.call_count == 1
+
+
 @pytest.mark.parametrize(
     "text",
     [

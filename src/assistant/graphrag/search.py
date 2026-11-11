@@ -186,7 +186,7 @@ def _wrong_supplier(question: str, text: str, selected, available, graph: nx.DiG
     )
 
 
-def _wrong_line(question: str, text: str, edges, graph: nx.DiGraph, *, include_replacements=False) -> bool:
+def _wrong_scope(question: str, text: str, edges, graph: nx.DiGraph, *, include_replacements=False) -> bool:
     lines = {
         f"ProductLine:{name}"
         for _, name in find_names(
@@ -194,9 +194,15 @@ def _wrong_line(question: str, text: str, edges, graph: nx.DiGraph, *, include_r
             {"ProductLine": [attrs["name"] for _, attrs in graph.nodes(data=True) if attrs["type"] == "ProductLine"]},
         )
     }
-    if not lines:
+    requested_models = {f"Model:{code}" for code in find_codes(question) if code_type(code) == "Model"}
+    if lines:
+        models = {start for start, end in edges if graph.edges[start, end]["type"] == "BELONGS_TO" and end in lines}
+        if requested_models:
+            models &= requested_models
+    elif requested_models and not any(code_type(code) == "Part" for code in find_codes(question)):
+        models = requested_models
+    else:
         return False
-    models = {start for start, end in edges if graph.edges[start, end]["type"] == "BELONGS_TO" and end in lines}
     parts = {end for start, end in edges if graph.edges[start, end]["type"] == "HAS_PART" and start in models}
     if include_replacements or not any(
         word in question.lower() for word in ("руководств", "исходн", "изначальн", "штатн")
@@ -215,19 +221,107 @@ def _wrong_line(question: str, text: str, edges, graph: nx.DiGraph, *, include_r
     )
 
 
+def _asks_part(question):
+    return bool(re.search(
+        r"\b(?:какую|какая|какие|какой)\s+(?:актуальн\w*\s+)?(?:детал\w*|артикул\w*)|(?:код|номер)\s+детали\b",
+        question.lower(),
+    ))
+
+
+def _missing_part(question, text, edges, graph):
+    return (
+        _asks_part(question)
+        and "в базе знаний не найдено" not in text.lower()
+        and not any(code_type(code) == "Part" for code in find_codes(text))
+        and any(graph.nodes[node]["type"] == "Part" for edge in edges for node in edge)
+    )
+
+
+def _part_evidence(question, text, selected, available, graph):
+    selected = set(selected)
+    paths = nx.DiGraph([
+        (a, b) for a, b in available if graph.edges[a, b]["type"] in {"HAS_PART", "REPLACED_BY"}
+    ])
+    models = [f"Model:{code}" for code in find_codes(question) if code_type(code) == "Model"]
+    parts = [f"Part:{code}" for code in find_codes(text) if code_type(code) == "Part"]
+    for model in models:
+        for part in parts:
+            if model not in paths or part not in paths or not nx.has_path(paths, model, part):
+                continue
+            path = nx.shortest_path(paths, model, part)
+            selected.update(zip(path, path[1:], strict=False))
+            selected.update((a, b) for a, b in available if a == path[1] and graph.edges[a, b]["type"] == "IS_A")
+    return selected
+
+
+def _outdated_part(question, text, available, graph):
+    if not _asks_part(question) or not any(
+        word in question.lower() for word in ("актуальн", "текущ", "нынешн", "последн", "теперь", "сейчас")
+    ):
+        return False
+    replacements = nx.DiGraph([(a, b) for a, b in available if graph.edges[a, b]["type"] == "REPLACED_BY"])
+    mentioned = {f"Part:{code}" for code in find_codes(text) if code_type(code) == "Part"}
+    old = {a for a, b in replacements.edges}
+    return any(not (nx.descendants(replacements, part) & (mentioned - old)) for part in mentioned & old)
+
+
+def _procedure_edges(question, available, graph):
+    if (
+        not any(word in question.lower() for word in ("регламент", "процедур"))
+        or _asks_part(question)
+        or any(word in question.lower() for word in ("поставщик", "поставля"))
+    ):
+        return None
+    errors = {f"ErrorCode:{code}" for code in find_codes(question) if code_type(code) == "ErrorCode"}
+    components = {
+        f"Component:{name}"
+        for _, name in find_names(question, {
+            "Component": [attrs["name"] for _, attrs in graph.nodes(data=True) if attrs["type"] == "Component"]
+        })
+    }
+    if components:
+        linked = {a for a, b in available if b in components and graph.edges[a, b]["type"] == "INDICATES"}
+        errors = errors & linked if errors else linked
+    if not errors and not components:
+        return None
+    return {
+        (a, b) for a, b in available
+        if a in errors and graph.edges[a, b]["type"] in {"INDICATES", "FIXED_BY"}
+    }
+
+
+def _procedure_evidence(question, text, selected, available, graph):
+    relevant = _procedure_edges(question, available, graph)
+    codes = {f"Procedure:{code}" for code in find_codes(text) if code_type(code) == "Procedure"}
+    if relevant is None or not codes:
+        return selected
+    errors = {a for a, b in relevant if graph.edges[a, b]["type"] == "FIXED_BY" and b in codes}
+    return {(a, b) for a, b in relevant if a in errors}
+
+
 def _scope_summaries(question, useful, evidence, provenance, graph):
     vocabulary = {
         "ProductLine": [attrs["name"] for _, attrs in graph.nodes(data=True) if attrs["type"] == "ProductLine"]
     }
     lines = set(find_names(question, vocabulary))
-    if not lines:
-        return useful, evidence, provenance
+    statistics = not any(
+        word in question.lower() for word in ("поставщик", "поставля", "регламент", "процедур")
+    ) or bool(re.search(
+        r"чаще|часто|частот|больше|статист|обзор|итог|(?:сколько|количеств).{0,40}(?:отказ|сбо)",
+        question.lower(),
+    ))
     available = {edge for group in provenance for edge in group}
+    procedure_edges = _procedure_edges(question, available, graph)
+    procedure_codes = {
+        graph.nodes[node]["name"] for edge in procedure_edges or set() for node in edge
+    }
     kept = [
         i
         for i, line in enumerate(evidence)
-        if not _wrong_line(question, line, available, graph, include_replacements=True)
-        and (not find_names(line, vocabulary) or set(find_names(line, vocabulary)) & lines)
+        if not _wrong_scope(question, line, available, graph, include_replacements=True)
+        and (not lines or not find_names(line, vocabulary) or set(find_names(line, vocabulary)) & lines)
+        and (statistics or not line.startswith(("Отказы узлов, ", "Всего отказов моделей, ")))
+        and (procedure_edges is None or bool(provenance[i] & procedure_edges))
     ]
     numbers = {old + 1: new + 1 for new, old in enumerate(kept)}
     scoped = []
@@ -235,7 +329,15 @@ def _scope_summaries(question, useful, evidence, provenance, graph):
         ids = [numbers[number] for number in partial["context_ids"] if number in numbers]
         if ids:
             text = partial["answer"]
-            if _wrong_line(question, text, available, graph, include_replacements=True):
+            if _wrong_scope(question, text, available, graph, include_replacements=True) or (
+                lines and set(find_names(text, vocabulary)) - lines
+            ) or _wrong_supplier(question, text, available, available, graph) or _outdated_part(
+                question, text, available, graph
+            ) or (
+                procedure_edges is not None
+                and any(code_type(code) in {"ErrorCode", "Procedure"} and code not in procedure_codes
+                        for code in find_codes(text))
+            ):
                 text = ""
             scoped.append({"answer": text, "context_ids": ids})
     return scoped, [evidence[i] for i in kept], [provenance[i] for i in kept]
@@ -424,7 +526,11 @@ def local_search(question: str, kb: KnowledgeBase, llm: LLMClient) -> Answer:
         try:
             text, ids = _read_answer(content, len(facts))
             selected = used if ids is None else [used[number - 1] for number in ids]
-            evidence = facts if ids is None else [facts[number - 1] for number in ids]
+            completed = _part_evidence(question, text, selected, used, graph)
+            if ids is not None:
+                completed = _procedure_evidence(question, text, completed, used, graph)
+            selected = [edge for edge in used if edge in completed]
+            evidence = [fact for fact, edge in zip(facts, used, strict=True) if edge in completed]
             allowed_codes = set(find_codes(question + "\n" + "\n".join(evidence)))
             unsupported = set(find_codes(text)) - allowed_codes
             supplier_error = _wrong_supplier(question, text, selected, used, graph)
@@ -432,7 +538,9 @@ def local_search(question: str, kb: KnowledgeBase, llm: LLMClient) -> Answer:
                 not unsupported
                 and not _claims_live_data(text)
                 and not supplier_error
-                and not _wrong_line(question, text, selected, graph)
+                and not _wrong_scope(question, text, selected, graph)
+                and not _missing_part(question, text, used, graph)
+                and not _outdated_part(question, text, used, graph)
             ):
                 return Answer(
                     text or REFUSAL,
@@ -473,6 +581,10 @@ def local_search(question: str, kb: KnowledgeBase, llm: LLMClient) -> Answer:
                     "content": request + "\nОтветь одним предложением с верными evidence_ids. "
                     "Каждый код должен быть в указанных фактах; цены и наличие ими не подтверждаются. "
                     "Если сведений недостаточно, напиши «В базе знаний не найдено». "
+                    "Сохрани модель и линейку из вопроса, не подбирай деталь другого оборудования. "
+                    "Если спрашивают деталь и в фактах есть её артикул, назови код Part: "
+                    "название Component не заменяет артикул. Используй HAS_PART и IS_A. "
+                    "Для актуальной детали проследи REPLACED_BY до конца: исходная версия не подходит. "
                     "Не добавляй сведения, которых не спрашивали.",
                 },
             ]
@@ -546,7 +658,9 @@ def global_search(question: str, kb: KnowledgeBase, llm: LLMClient) -> Answer:
         for node in community.nodes:
             legacy_sources.update(source.split("#")[0] for source in kb.graph.nodes[node].get("sources", []))
     useful, evidence, provenance = _scope_summaries(question, useful, evidence, provenance, kb.graph)
-    if any(kind == "ProductLine" for kind, name in find_names(question, kb.vocabulary)):
+    if any(kind == "ProductLine" for kind, name in find_names(question, kb.vocabulary)) or any(
+        code_type(code) == "Model" for code in find_codes(question)
+    ):
         legacy_sources = set(_sources(kb.graph, {edge for group in provenance for edge in group}))
     if not useful:
         return Answer(REFUSAL, refused=True)
@@ -577,12 +691,22 @@ def global_search(question: str, kb: KnowledgeBase, llm: LLMClient) -> Answer:
             "исходных артикулов, без перечисления новых версий. Для каждого процитируй строку исходной "
             "детали нужной линейки и строку её замены."
         )
+    elif any(word in question.lower() for word in ("регламент", "процедур")):
+        instruction += (
+            "Вопрос просит регламент. Найди код Procedure по FIXED_BY; INDICATES связывает ошибку "
+            "с запрошенным узлом. В answer оставь только код регламента и его название, если оно есть. "
+            "Не добавляй описание замен, комплектации, поставщика и снятия деталей с производства. "
+            "HAS_PART, IS_A и REPLACED_BY не обозначают регламент. Процитируй только нужные строки."
+        )
     else:
         instruction += (
             "Дай только запрошенные сведения, без советов. Для максимума сравни всех кандидатов "
             "по полным таблицам и укажи значение; не выбирай по score или числу упоминаний. "
             "Отказы узла во всей линейке и общий итог модели — разные показатели. Повторы одной таблицы "
-            "не складывай. Для перечня перечисли подходящие сущности без рейтинга. "
+            "не складывай. Для сравнения моделей используй «Всего отказов моделей», "
+            "для сравнения узлов — «Отказы узлов»; выбери наибольшее число в соответствующей таблице. "
+            "Если спрашивают регламент, нужен код процедуры по FIXED_BY, а не список деталей. "
+            "Для перечня перечисли подходящие сущности без рейтинга. "
             "HAS_PART — исходная комплектация, REPLACED_BY — старая→новая деталь; для заказа нужна последняя. "
             "SUPPLIED_BY относится только к указанной детали. ERP поставщика не возвращает. "
             "Поиск не создаёт заказ. Сохраняй полные коды и названия."
@@ -608,7 +732,9 @@ def global_search(question: str, kb: KnowledgeBase, llm: LLMClient) -> Answer:
         if (
             set(find_codes(text)) - allowed_codes
             or _wrong_supplier(question, text, available, available, kb.graph)
-            or _wrong_line(question, text, available, kb.graph)
+            or _wrong_scope(question, text, available, kb.graph)
+            or _missing_part(question, text, available, kb.graph)
+            or _outdated_part(question, text, available, kb.graph)
         ):
             return Answer(REFUSAL, refused=True)
         return Answer(
@@ -617,13 +743,23 @@ def global_search(question: str, kb: KnowledgeBase, llm: LLMClient) -> Answer:
     selected = [evidence[number - 1] for number in ids]
     if any(not provenance[number - 1] for number in ids):
         return Answer(REFUSAL, refused=True)
-    allowed_codes = set(find_codes(question + "\n" + "\n".join(selected)))
     edges = {edge for number in ids for edge in provenance[number - 1]}
     available = {edge for group in provenance for edge in group}
+    completed = _part_evidence(question, text, edges, available, kb.graph)
+    completed = _procedure_evidence(question, text, completed, available, kb.graph)
+    selected = [evidence[number - 1] for number in ids if provenance[number - 1] & completed]
+    selected.extend(
+        f"{kb.graph.nodes[a]['name']} -{kb.graph.edges[a, b]['type']}-> {kb.graph.nodes[b]['name']}"
+        for a, b in sorted(completed - edges)
+    )
+    edges = completed
+    allowed_codes = set(find_codes(question + "\n" + "\n".join(selected)))
     if (
         set(find_codes(text)) - allowed_codes
         or _wrong_supplier(question, text, edges, available, kb.graph)
-        or _wrong_line(question, text, edges, kb.graph)
+        or _wrong_scope(question, text, edges, kb.graph)
+        or _missing_part(question, text, available, kb.graph)
+        or _outdated_part(question, text, available, kb.graph)
     ):
         return Answer(REFUSAL, refused=True)
     return Answer(

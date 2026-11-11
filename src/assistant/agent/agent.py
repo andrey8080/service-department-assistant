@@ -81,8 +81,7 @@ def _answer_review(
         return None
     if (
         any(word in question.lower() for word in ("регламент", "процедур"))
-        and any(name == "summarize_topic" for name, _ in searches)
-        and not any(step.tool == "search_knowledge" for step in steps)
+        and not any(code_type(code) == "Procedure" for code in find_codes(text))
         and "search_knowledge" in tools
     ):
         evidence = json.dumps(
@@ -91,10 +90,13 @@ def _answer_review(
         )
         if not any(code_type(code) == "Procedure" for code in find_codes(evidence)):
             return (
-                "Исходный вопрос просит регламент, а полученный обзор не содержит его кода. "
-                "Перечень деталей и замен не отвечает на этот вопрос. Проверь исходный вопрос через "
-                "search_knowledge. Не угадывай номер регламента; если поиск не подтвердит данные, сообщи об этом."
+                "Исходный вопрос просит регламент, а поиск не содержит его кода. "
+                "Перечень деталей и замен не отвечает на эту часть вопроса. Вызови search_knowledge "
+                "отдельно для регламента указанной ошибки, без модели оборудования и перечня деталей. "
+                "Сохрани уже проверенные сведения для других частей ответа. "
+                "Не угадывай номер регламента; если поиск не подтвердит данные, сообщи об этом."
             )
+        return "В результатах поиска уже есть код регламента. Включи его в ответ на исходный вопрос, без новых фактов."
     if any(value.get("refused") for _, value in searches):
         return None
     if "в базе знаний не найдено" in text.lower():
@@ -137,7 +139,16 @@ def run_agent(
         return AgentResult(text, steps=list(steps), sources=sorted(sources), **kwargs)
 
     while len(steps) < max_steps:
-        response = llm.chat(messages, tools=TOOL_SCHEMAS)
+        schemas = TOOL_SCHEMAS
+        if order_reminded and not confirm:
+            schemas = [
+                {**schema, "function": {**schema["function"], "description":
+                    "Подготовить параметры заказа к подтверждению. Вызывай ДО запроса подтверждения: "
+                    "программа остановится перед отправкой заказа в ERP."}}
+                if schema["function"]["name"] == "create_service_order" else schema
+                for schema in TOOL_SCHEMAS
+            ]
+        response = llm.chat(messages, tools=schemas)
         messages.append(response.as_message())
         if not response.tool_calls:
             text = response.content.strip()
@@ -156,6 +167,19 @@ def run_agent(
                     else "В ответе есть неподтверждённый код, цена или остаток. Исправь ответ только по "
                     "вопросу и результатам инструментов. Если данных нет, откажись."
                 )
+                if _asks_supplier(question) and _asks_current(question):
+                    if not erp_claim and not re.search(r"артикул|номер|код\s+детал", question, re.IGNORECASE):
+                        correction = (
+                            "Пользователь спрашивает только текущего поставщика. Ответь одним его названием "
+                            "по успешному поиску, без артикулов, номеров моделей и скобок. Артикул старой версии "
+                            "в этом ответе не нужен. Если подходящего результата поиска нет, проверь через "
+                            "search_knowledge или честно откажись. Не добавляй новых сведений."
+                        )
+                    else:
+                        correction += (
+                            " Не связывай текущего поставщика с артикулом старой версии. Укажи конечный артикул "
+                            "по цепочке замен либо только имя поставщика, если артикул не спрашивали."
+                        )
                 messages.append(
                     {
                         "role": "user",
@@ -181,6 +205,8 @@ def run_agent(
                             "Ты просишь подтвердить заказ, но его параметры ещё не переданы программе. "
                             "Вызови create_service_order с проверенными параметрами из вопроса и результатов поиска. "
                             "Программа сама запросит подтверждение. Текстовое обещание не подготавливает заказ. "
+                            "Следующий ответ должен содержать вызов функции, а не просьбу подтвердить в тексте. "
+                            "Подтверждение нужно для отправки в ERP, но не для подготовки параметров. "
                             "Не придумывай недостающие параметры и не утверждай, что заказ создан."
                         ),
                     }
@@ -249,7 +275,18 @@ def run_agent(
             ):
                 error = (
                     "Поисковый запрос потерял вопрос о поставщике. Уточни search_knowledge: "
-                    "сохрани запрос поставщика и актуальность детали из исходного вопроса."
+                    f"передай исходный вопрос без перевода и пересказа: {question}"
+                )
+            if (
+                not error
+                and call.name == "search_knowledge"
+                and not any(name == "search_knowledge" for name, _ in results)
+                and any(word in question.lower() for word in ("регламент", "процедур"))
+                and not any(word in args["question"].lower() for word in ("регламент", "процедур"))
+            ):
+                error = (
+                    "Поисковый запрос потерял запрошенный вид сведений. Передай в search_knowledge "
+                    f"исходный вопрос без пересказа: {question}"
                 )
             if (
                 not error
@@ -267,6 +304,17 @@ def run_agent(
                     "если спрашивают поставщика, нужен поставщик последней версии."
                     if _asks_supplier(question)
                     else "Поисковый запрос потерял условие актуальности. Передай в search_knowledge "
+                    f"исходный вопрос без пересказа: {question}"
+                )
+            if (
+                not error
+                and call.name == "summarize_topic"
+                and "сня" in question.lower()
+                and any(word in question.lower() for word in ("руководств", "исходн", "изначальн"))
+                and not any(word in args["question"].lower() for word in ("руководств", "исходн", "изначальн"))
+            ):
+                error = (
+                    "Запрос потерял условие исходных деталей из руководств. Передай в summarize_topic "
                     f"исходный вопрос без пересказа: {question}"
                 )
             if not error and "part_id" in args and args["part_id"] not in allowed_codes(question, results):

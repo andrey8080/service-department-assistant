@@ -95,8 +95,27 @@ def unsupported_erp_claims(text: str) -> bool:
 
 
 def unsupported_facts(text: str, question: str, results: list[tuple[str, dict]]) -> list[str]:
-    """Проверяет коды и числовые утверждения; тип цены отделён от количества."""
+    """Проверяет коды, версии деталей и числа; тип цены отделён от количества."""
     wrong = [code for code in find_codes(text) if code not in allowed_codes(question, results)]
+    if any(word in question.lower() for word in ("поставщик", "поставля")) and any(
+        word in question.lower() for word in ("актуальн", "текущ", "нынешн", "последн", "теперь", "сейчас")
+    ):
+        replacements = {}
+        for _, result in results:
+            for fact in result.get("facts", []):
+                if not isinstance(fact, str):
+                    continue
+                match = re.fullmatch(r"(P-\d{4}[A-Z]?) -REPLACED_BY-> (P-\d{4}[A-Z]?)", fact)
+                if match:
+                    replacements[match[1]] = match[2]
+        mentioned = set(find_codes(text))
+        for part in mentioned & replacements.keys():
+            current, visited = part, set()
+            while current in replacements and current not in visited:
+                visited.add(current)
+                current = replacements[current]
+            if current not in mentioned or current in replacements:
+                wrong.append(part)
     prices = {_number(value) for value in _PRICE.findall(question)}
     quantities = {_number(value) for value in requested_quantities(question)}
     order_ids = set(_ORDER_ID.findall(question))

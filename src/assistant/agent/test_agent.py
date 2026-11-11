@@ -97,6 +97,55 @@ def test_a_refused_overview_does_not_block_exact_procedure_search():
     assert overview.call_count == 1 and search.call_count == 1
 
 
+@pytest.mark.parametrize("answer,wrong", [
+    ("Текущий поставщик — Новый (P-9070).", ["P-9070"]),
+    ("Текущий поставщик — Новый (P-9070B).", ["P-9070B"]),
+    ("Текущий поставщик — Новый (P-9070C).", []),
+    ("Текущий поставщик — Новый.", []),
+    ("Вместо P-9070 используется P-9070C, поставщик — Новый.", []),
+])
+def test_current_supplier_cannot_be_labelled_with_only_an_obsolete_part_number(answer, wrong):
+    evidence = [("search_knowledge", {"facts": [
+        "P-9070 -REPLACED_BY-> P-9070B", "P-9070B -REPLACED_BY-> P-9070C",
+        "P-9070C -SUPPLIED_BY-> Новый",
+    ]})]
+    assert unsupported_facts(answer, "Кто сейчас поставляет насос для GS-610?", evidence) == wrong
+
+
+@pytest.mark.parametrize("repaired", [True, False])
+def test_current_supplier_part_mismatch_gets_one_correction(repaired):
+    search = Mock(return_value={
+        "answer": "Новый", "facts": ["P-9070 -REPLACED_BY-> P-9070B", "P-9070B -SUPPLIED_BY-> Новый"],
+    })
+    wrong = "Текущий поставщик — Новый (P-9070)."
+    llm = FakeLLM([
+        call("search_knowledge", question="Кто сейчас поставляет насос для GS-610?"),
+        wrong, "Новый." if repaired else wrong,
+    ])
+
+    result = run_agent("Кто сейчас поставляет насос для GS-610?", llm, {"search_knowledge": search})
+
+    assert result.refused is not repaired
+    assert len(llm.requests) == 3 and search.call_count == 1
+    assert "старой версии" in llm.requests[-1]["messages"][-1]["content"]
+
+
+def test_overview_preserves_the_original_catalog_part_constraint():
+    question = "Какие детали из руководств линейки «Север» сняты с производства?"
+    overview = Mock(return_value={"answer": "P-9070", "sources": ["manual.md", "bulletin.md"]})
+    llm = FakeLLM([
+        call("summarize_topic", question="снятые детали линейки Север"),
+        call("summarize_topic", question=question),
+        "P-9070.",
+    ])
+
+    result = run_agent(question, llm, {"summarize_topic": overview})
+
+    overview.assert_called_once_with(question=question)
+    assert not result.refused and result.answer == "P-9070."
+    assert len(result.steps) == 2 and "исходных" in result.steps[0].error
+
+
 @pytest.mark.parametrize(
     "text",
     [
@@ -298,6 +347,11 @@ def test_text_confirmation_must_be_followed_by_the_order_tool(confirm):
     else:
         create.assert_not_called()
         assert result.pending_action == {"tool": "create_service_order", "args": order}
+        descriptions = {
+            schema["function"]["name"]: schema["function"]["description"]
+            for schema in llm.requests[1]["tools"]
+        }
+        assert "ДО запроса подтверждения" in descriptions["create_service_order"]
 
 
 def test_repeated_text_confirmation_does_not_claim_a_prepared_order():
@@ -1041,6 +1095,8 @@ def test_procedure_review_respects_previous_search_available_tools_and_step_limi
         script.append(call("search_knowledge", question=question))
     if case != "step_limit":
         script.append(answer)
+    if case == "already_local":
+        script.append(answer)
     llm = FakeLLM(script)
 
     result = run_agent(question, llm, tools, max_steps=1 if case == "step_limit" else 6)
@@ -1116,3 +1172,34 @@ def test_order_after_answer_review_still_requires_confirmation(confirm):
         create.assert_not_called()
         assert result.pending_action == {"tool": "create_service_order", "args": order}
         assert all(value in result.answer for value in ["P-4800", "GS-610", "Москва", "2 шт."])
+
+
+@pytest.mark.parametrize("question, lost", [
+    ("Для GS-610 нужны артикул и регламент при E-51", "ошибка E-51 на GS-610"),
+    ("Назови поставщика P-9070", "postavshchik P-9070"),
+])
+def test_search_retry_preserves_the_original_requested_fields(question, lost):
+    found = "SP-151" if "регламент" in question else "Найдено"
+    search = Mock(return_value={"answer": found, "refused": False})
+    llm = FakeLLM([call("search_knowledge", question=lost),
+                   call("search_knowledge", question=question), found])
+
+    result = run_agent(question, llm, {"search_knowledge": search})
+
+    search.assert_called_once_with(question=question)
+    assert not result.refused
+    assert question in result.steps[0].error
+
+
+def test_a_missing_procedure_is_checked_separately_after_finding_the_part():
+    question = "На GS-610 ошибка E-51. Назови артикул и регламент."
+    search = Mock(side_effect=[
+        {"answer": "P-9070", "facts": ["GS-610 -HAS_PART-> P-9070"], "sources": ["manual.md"]},
+        {"answer": "SP-151", "facts": ["E-51 -FIXED_BY-> SP-151"], "sources": ["procedure.md"]},
+    ])
+    llm = FakeLLM([call("search_knowledge", question=question), "Артикул P-9070.",
+                   call("search_knowledge", question="Какой регламент при E-51?"), "P-9070, SP-151."])
+    result = run_agent(question, llm, {"search_knowledge": search})
+    assert not result.refused and result.answer == "P-9070, SP-151."
+    assert search.call_count == 2 and len(result.steps) == 2
+    assert result.sources == ["manual.md", "procedure.md"]

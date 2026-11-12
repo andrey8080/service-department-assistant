@@ -97,6 +97,17 @@ def test_a_refused_overview_does_not_block_exact_procedure_search():
     assert overview.call_count == 1 and search.call_count == 1
 
 
+ERP_PRICES = [
+    ("get_price", {"part_id": "P-1042B", "price_rub": 2630}),
+    ("get_price", {"part_id": "P-2054C", "price_rub": 6750}),
+]
+ERP_STOCKS = [
+    ("check_stock", {"part_id": "P-1042B", "warehouse": "Казань", "qty": 3}),
+    ("check_stock", {"part_id": "P-1042B", "warehouse": "Москва", "qty": 7}),
+    ("check_stock", {"part_id": "P-2054C", "warehouse": "Казань", "qty": 9}),
+]
+
+
 @pytest.mark.parametrize("answer,wrong", [
     ("Текущий поставщик — Новый (P-9070).", ["P-9070"]),
     ("Текущий поставщик — Новый (P-9070B).", ["P-9070B"]),
@@ -1407,3 +1418,187 @@ def test_both_confirmation_wordings_prepare_a_pending_order(confirmation, recove
     result = run_agent(question, llm, {"get_price": price, "create_service_order": create})
     assert result.needs_confirmation and result.pending_action == {"tool": "create_service_order", "args": order}
     create.assert_not_called()
+
+
+@pytest.mark.parametrize("answer,wrong", [
+    ("P-1042B стоит 2630 руб.; P-2054C — 6750 рублей.", False),
+    ("P-1042B стоит 6750 руб.; P-2054C — 2630 рублей.", True),
+    ("P-1042B\nЦена: 2\u00a0630,00 ₽.\nP-2054C\nЦена: 6750 руб.", False),
+    ("P-1042B\nЦена: 6750 руб.\nP-2054C\nЦена: 2630 руб.", True),
+    ("P-1042B: Казань — 3 шт.; Москва — 7 шт.", False),
+    ("P-1042B: Казань — 7 шт.; Москва — 3 шт.", True),
+    ("Казань: P-1042B — 3 шт., P-2054C — 9 шт.", False),
+    ("Казань: P-1042B — 9 шт., P-2054C — 3 шт.", True),
+])
+def test_erp_values_belong_to_the_part_and_warehouse(answer, wrong):
+    assert bool(unsupported_facts(answer, "Сравни P-1042B и P-2054C.", ERP_PRICES + ERP_STOCKS)) is wrong
+
+
+def test_a_price_for_another_part_cannot_answer_an_implicit_price_question():
+    assert unsupported_facts("Цена: 6750 рублей.", "Сколько стоит P-1042B?", ERP_PRICES[1:])
+
+
+def test_question_price_is_not_proof_of_the_actual_erp_price():
+    assert unsupported_facts("Цена 2000 рублей.", "P-1042B стоит 2000 рублей?", ERP_PRICES)
+
+
+@pytest.mark.parametrize("answer,wrong", [
+    ("Подтвердите заказ: 2 шт. P-1042B, склад Казань. Остаток: 3 шт.", False),
+    ("Для заказа нужно 2 шт. P-1042B; в наличии 2 шт.", True),
+    ("На складе 2 шт.", True),
+])
+def test_order_quantity_does_not_confirm_the_stock(answer, wrong):
+    question = "Закажи 2 шт. P-1042B со склада Казань."
+    result = ERP_STOCKS[:1] + [("create_service_order", {
+        "part_id": "P-1042B", "warehouse": "Казань", "qty": 2, "order_id": "SO-12345",
+    })]
+    assert bool(unsupported_facts(answer, question, result)) is wrong
+
+
+def test_requested_pending_quantity_is_legal_without_a_created_order():
+    assert not unsupported_facts(
+        "Подтвердите заказ: 2 шт. P-1042B, модель AR-210, склад Казань.",
+        "Закажи 2 шт. P-1042B для AR-210 со склада Казань.", [],
+    )
+
+
+@pytest.mark.parametrize("quantity", [0, 2])
+def test_stock_without_units_is_bound_to_the_explicit_part(quantity):
+    answer = f"На складе в Казани остаток детали P-2146 равен {quantity}."
+    results = [("check_stock", {"part_id": "P-2146", "warehouse": "Казань", "qty": 0})]
+    assert bool(unsupported_facts(answer, "Сколько P-2146 в Казани?", results)) is (quantity != 0)
+
+
+def test_a_partial_refusal_keeps_a_proven_price_and_refuses_the_missing_stock():
+    answer = "P-1042B стоит 2630 руб. Остаток на складе в Казани получить не удалось."
+    results = ERP_PRICES[:1] + [("check_stock", {"error": "нет связи"})]
+    assert not unsupported_facts(answer, "Цена и остаток P-1042B в Казани?", results)
+
+
+@pytest.mark.parametrize('question,answer,facts', [
+    ('В какую линейку входит модель BZ-210?', 'Бриз.', ['BZ-210 -BELONGS_TO-> Бриз']),
+    ('По какому регламенту устраняют отказ узла «вентилятор испарителя»?', 'SP-108.',
+     ['E-18 -FIXED_BY-> SP-108']),
+])
+def test_specific_fact_is_redirected_before_expensive_overview(question, answer, facts):
+    overview = Mock()
+    search = Mock(return_value={'answer': answer, 'facts': facts, 'sources': ['manual.md']})
+    llm = FakeLLM([
+        call('summarize_topic', question=question),
+        call('search_knowledge', question=question),
+        answer,
+    ])
+
+    result = run_agent(question, llm, {'summarize_topic': overview, 'search_knowledge': search})
+
+    assert result.answer == answer and not result.refused
+    assert result.sources == ['manual.md']
+    assert result.steps[0].error and not result.steps[1].error
+    overview.assert_not_called()
+    search.assert_called_once_with(question=question)
+    assert 'search_knowledge' in llm.requests[1]['messages'][-1]['content']
+
+
+@pytest.mark.parametrize('question', [
+    'У какой модели больше всего отказов, включая BZ-210?',
+    'Сравни исходного и текущего поставщиков для GS-510.',
+    'Какие узлы чаще отказывают в линейке «Арктика»?',
+])
+def test_overview_is_not_redirected_even_when_it_mentions_one_model(question):
+    overview = Mock(return_value={'answer': 'В базе знаний не найдено.', 'refused': True})
+    search = Mock()
+    llm = FakeLLM([call('summarize_topic', question=question), 'В базе знаний не найдено.',
+                   'В базе знаний не найдено.'])
+
+    result = run_agent(question, llm, {'summarize_topic': overview, 'search_knowledge': search})
+
+    assert result.refused and not result.steps[0].error
+    overview.assert_called_once_with(question=question)
+    search.assert_not_called()
+
+
+def test_overview_remains_available_after_local_search_has_no_answer():
+    question = 'В какую линейку входит модель BZ-210?'
+    search = Mock(return_value={'answer': 'В базе знаний не найдено.', 'refused': True})
+    overview = Mock(return_value={'answer': 'Бриз.', 'sources': ['manual.md']})
+    llm = FakeLLM([
+        call('search_knowledge', question=question),
+        call('summarize_topic', question=question),
+        'Бриз.',
+    ])
+
+    result = run_agent(question, llm, {'summarize_topic': overview, 'search_knowledge': search})
+
+    assert result.answer == 'Бриз.' and not result.refused
+    assert all(not step.error for step in result.steps)
+    overview.assert_called_once_with(question=question)
+
+
+def test_partial_supplier_search_gets_a_narrow_followup_hint_without_selecting_a_part_in_code():
+    question = 'Кто сейчас поставляет деталь узла «реле давления» для модели GS-520?'
+    search = Mock(side_effect=[
+        {'answer': 'В базе знаний не найдено.', 'refused': True, 'facts': [
+            'GS-520 -HAS_PART-> P-3126', 'P-3126 -IS_A-> реле давления',
+            'P-3126 -REPLACED_BY-> P-3126B',
+        ]},
+        {'answer': 'АвтоматикаСевер.', 'facts': ['P-3126B -SUPPLIED_BY-> АвтоматикаСевер']},
+    ])
+    llm = FakeLLM([
+        call('search_knowledge', question=question),
+        call('search_knowledge', question='поставщик P-3126B'),
+        'АвтоматикаСевер.',
+    ])
+
+    result = run_agent(question, llm, {'search_knowledge': search})
+
+    assert result.answer == 'АвтоматикаСевер.' and not result.refused
+    assert search.call_args_list[1].kwargs == {'question': 'поставщик P-3126B'}
+    hints = [m['content'] for m in llm.requests[1]['messages'] if m['role'] == 'user']
+    assert any('только по одному найденному артикулу' in hint for hint in hints)
+    assert len(result.steps) == 2 and all(not step.error for step in result.steps)
+
+
+def test_contact_request_does_not_trigger_a_company_lookup_hint():
+    question = 'Какой телефон у поставщика P-3126B?'
+    search = Mock(return_value={
+        'answer': 'В базе знаний не найдено.', 'refused': True,
+        'facts': ['P-3126B -SUPPLIED_BY-> АвтоматикаСевер'],
+    })
+    llm = FakeLLM([call('search_knowledge', question=question), 'В базе знаний не найдено.'])
+
+    result = run_agent(question, llm, {'search_knowledge': search})
+
+    assert result.refused and len(result.steps) == 1
+    assert 'только по одному найденному артикулу' not in json.dumps(llm.requests, ensure_ascii=False)
+
+
+@pytest.mark.parametrize("answer", [
+    "На складе в Казани для заказа есть 2 шт. P-1042B.",
+    "Для заказа P-1042B есть 2 шт. на складе в Казани.",
+    "P-1042B: для заказа в Казани имеется 2 шт.",
+])
+def test_availability_for_an_order_is_not_the_requested_order_quantity(answer):
+    question = "Закажи 2 шт. P-1042B для AR-210, склад Казань."
+    results = [("check_stock", {"part_id": "P-1042B", "warehouse": "Казань", "qty": 3})]
+    assert unsupported_facts(answer, question, results) == ["2"]
+
+
+@pytest.mark.parametrize("answer", [
+    "Для заказа нужно 2 шт. P-1042B; на складе в Казани 3 шт.",
+    "Нужно заказать 2 шт. P-1042B со склада в Казани. Остаток 3 шт.",
+])
+def test_the_order_quantity_and_available_stock_can_be_different(answer):
+    question = "Закажи 2 шт. P-1042B для AR-210, склад Казань."
+    results = [("check_stock", {"part_id": "P-1042B", "warehouse": "Казань", "qty": 3})]
+    assert not unsupported_facts(answer, question, results)
+
+
+def test_contents_of_a_created_order_are_not_the_remaining_stock():
+    results = [
+        ("check_stock", {"part_id": "P-1042B", "warehouse": "Казань", "qty": 3}),
+        ("create_service_order", {
+            "part_id": "P-1042B", "warehouse": "Казань", "qty": 2, "order_id": "SO-12345",
+        }),
+    ]
+    answer = "В заказе есть 2 шт. P-1042B. На складе в Казани осталось 3 шт."
+    assert not unsupported_facts(answer, "Проверь P-1042B в Казани.", results)

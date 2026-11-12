@@ -5,13 +5,18 @@ import re
 from decimal import Decimal
 
 from assistant.infra.config import vocabulary
-from assistant.infra.grounding import code_type, find_codes
+from assistant.infra.grounding import code_type, find_codes, normalize_code
 
 _NUMBER = r"(?<![\w-])(?:\d{1,3}(?:[ \u00a0\u202f]\d{3})+|\d+)(?:[.,]\d+)?(?![\w-])"
 _PRICE = re.compile(rf"({_NUMBER})\s*(?:руб\w*|₽|р\.)", re.IGNORECASE)
 _STOCK = re.compile(rf"({_NUMBER})\s*(?:шт\w*|единиц\w*)", re.IGNORECASE)
-_NAMED_PRICE = re.compile(rf"(?:цен\w*|стоимост\w*|стоит)\s*[:=]?\s*({_NUMBER})", re.IGNORECASE)
-_NAMED_STOCK = re.compile(rf"(?:остаток|в наличии|на складе)\s*[:=]?\s*({_NUMBER})", re.IGNORECASE)
+_NAMED_PRICE = re.compile(rf"(?:цен\w*|стоимост\w*|стоит)\s*[:=—–-]?\s*({_NUMBER})", re.IGNORECASE)
+_NAMED_STOCK = re.compile(
+    rf"(?:остаток|осталось|доступно|в наличии|на складе)\s*[:=—–-]?\s*({_NUMBER})", re.IGNORECASE,
+)
+_STOCK_EQUALS = re.compile(
+    rf"(?:остаток|наличие)[^,;\n]{{0,100}}?\b(?:равен|составляет)\s*[:=—–-]?\s*({_NUMBER})", re.I,
+)
 _ORDER_ID = re.compile(r"\bSO-\d+\b", re.IGNORECASE)
 _SUPPLIER = re.compile(r"поставщик\w*|кто\s+поставля\w*", re.IGNORECASE)
 _ERP_LOOKUP = re.compile(
@@ -196,6 +201,97 @@ def unsupported_erp_claims(text: str) -> bool:
     return False
 
 
+
+_PART_MENTION = re.compile(r"(?<![\w-])[PРрp][- ]?\d{4}[A-Za-zА-Яа-я]?(?![\w-])")
+_ORDER_CONTEXT = re.compile(r"заказ\w*|закаж\w*|заказать|количество\s+(?:заказа|к\s+заказу)", re.I)
+_STOCK_CONTEXT = re.compile(r"остат\w*|налич\w*|на\s+складе|доступно|\bесть\b|\bиме(?:ется|ются)\b", re.I)
+_FRAGMENTS = re.compile(r"\n+|[!?;]\s*|(?<!руб)(?<!шт)(?<!р)\.\s+|(?<!\d),|,(?!\d)|\s+и\s+", re.I)
+
+
+def _part_mentions(text):
+    return [(m.start(), m.end(), normalize_code(m.group())) for m in _PART_MENTION.finditer(text)]
+
+
+def _warehouse_mentions(text):
+    mentions = []
+    for name, pattern in _WAREHOUSE_NAMES.items():
+        mentions.extend((m.start(), m.end(), name) for m in re.finditer(rf"\b{pattern}\b", text, re.I))
+    # Неизвестный явно названный склад тоже задаёт область утверждения.
+    for match in re.finditer(r"\bсклад(?:е|а|у|ом)?\s*(?:в\s+)?([А-ЯЁ][а-яё-]+)", text):
+        if not any(start <= match.start(1) < end for start, end, _ in mentions):
+            mentions.append((match.start(1), match.end(1), match[1]))
+    return sorted(mentions)
+
+
+def _claim_scope(mentions, position, inherited, default):
+    if mentions:
+        before = [item for item in mentions if item[0] < position]
+        return {before[-1][2] if before else mentions[0][2]}
+    return inherited or default
+
+
+def _erp_numbers(text, question, results):
+    prices, stocks, orders = {}, {}, {}
+    for name, result in results:
+        if result.get("error"):
+            continue
+        part = result.get("part_id")
+        if name == "get_price" and type(result.get("price_rub")) in (int, float):
+            prices.setdefault(part, set()).add(_number(result["price_rub"]))
+        if name in {"check_stock", "create_service_order"} and type(result.get("qty")) is int:
+            target = stocks if name == "check_stock" else orders
+            target.setdefault((part, result.get("warehouse")), set()).add(_number(result["qty"]))
+    parts = {code for code in find_codes(question) if code_type(code) == "Part"}
+    default_parts = parts or set(prices) | {part for part, _ in stocks} | {part for part, _ in orders}
+    default_warehouses = {name for _, _, name in _warehouse_mentions(question)}
+    if not default_warehouses:
+        default_warehouses = {warehouse for _, warehouse in stocks}
+    requested = {_number(value) for value in requested_quantities(question)}
+    current_parts, current_warehouses = set(), set()
+    wrong = []
+    for fragment in _FRAGMENTS.split(text):
+        part_mentions = _part_mentions(fragment)
+        warehouses = _warehouse_mentions(fragment)
+        claims = {}
+        for kind, patterns in (("price", (_PRICE, _NAMED_PRICE)), ("quantity", (_STOCK, _NAMED_STOCK, _STOCK_EQUALS))):
+            for pattern in patterns:
+                for match in pattern.finditer(fragment):
+                    claims[(match.start(1), match.end(1), kind)] = match[1]
+        for (start, _, kind), raw in sorted(claims.items()):
+            value = _number(raw)
+            claim_parts = _claim_scope(part_mentions, start, current_parts, default_parts)
+            claim_warehouses = _claim_scope(warehouses, start, current_warehouses, default_warehouses)
+            if kind == "price":
+                valid = claim_parts and all(value in prices.get(part, set()) for part in claim_parts)
+            else:
+                prefix = fragment[:start]
+                order = list(_ORDER_CONTEXT.finditer(prefix))
+                stock = list(_STOCK_CONTEXT.finditer(prefix))
+                in_order = re.search(r"\bв\s+заказе\s+(?:есть|имеется|имеются)\s*$", prefix, re.I)
+                is_order = in_order or (order and (not stock or order[-1].start() > stock[-1].start())) or (
+                    not _STOCK_CONTEXT.search(fragment) and _ORDER_CONTEXT.search(fragment)
+                )
+                if is_order:
+                    valid = value in requested or (
+                        claim_parts and claim_warehouses and all(
+                            value in orders.get((part, warehouse), set())
+                            for part in claim_parts for warehouse in claim_warehouses
+                        )
+                    )
+                else:
+                    valid = claim_parts and claim_warehouses and all(
+                        value in stocks.get((part, warehouse), set())
+                        for part in claim_parts for warehouse in claim_warehouses
+                    )
+            if not valid:
+                wrong.append(raw)
+        if part_mentions:
+            current_parts = {part_mentions[-1][2]}
+        if warehouses:
+            current_warehouses = {warehouses[-1][2]}
+    return wrong
+
+
 def unsupported_facts(text: str, question: str, results: list[tuple[str, dict]]) -> list[str]:
     """Проверяет коды, версии деталей и числа; тип цены отделён от количества."""
     wrong = [code for code in find_codes(text) if code not in allowed_codes(question, results)]
@@ -223,22 +319,10 @@ def unsupported_facts(text: str, question: str, results: list[tuple[str, dict]])
                 current = replacements[current]
             if current not in mentioned or current in replacements:
                 wrong.append(part)
-    prices = {_number(value) for value in _PRICE.findall(question)}
-    quantities = {_number(value) for value in requested_quantities(question)}
+    wrong.extend(_erp_numbers(text, question, results))
     order_ids = set(_ORDER_ID.findall(question))
     for name, result in results:
-        if name == "get_price" and isinstance(result.get("price_rub"), (int, float)):
-            prices.add(_number(result["price_rub"]))
-        if name in ("check_stock", "create_service_order") and type(result.get("qty")) is int:
-            quantities.add(_number(result["qty"]))
         if name == "create_service_order" and result.get("order_id"):
             order_ids.add(result["order_id"])
-    for pattern, allowed in (
-        (_PRICE, prices),
-        (_NAMED_PRICE, prices),
-        (_STOCK, quantities),
-        (_NAMED_STOCK, quantities),
-    ):
-        wrong.extend(value for value in pattern.findall(text) if _number(value) not in allowed)
     wrong.extend(value for value in _ORDER_ID.findall(text) if value not in order_ids)
     return list(dict.fromkeys(wrong))

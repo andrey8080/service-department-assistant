@@ -20,6 +20,10 @@ from assistant.infra.llm import LLMClient, tool_message
 from assistant.infra.schemas import AgentResult, ToolStep
 
 REFUSAL = "В базе знаний не найдено достаточно подтверждённых данных для ответа."
+LOCAL_FIRST = (
+    "Это вопрос о конкретном факте, а не обзор линейки. Сначала вызови search_knowledge "
+    "с исходным вопросом. summarize_topic потребуется только для обзора или если точный поиск не поможет."
+)
 SYSTEM = """Ты ассистент сервисной службы. Отвечай по-русски, используй инструменты.
 Конкретный факт — регламент, значение ошибки, деталь, её замена или поставщик — проверяй через search_knowledge.
 Передавай исходный вопрос с названными в нём моделью, кодом ошибки и узлом; не придумывай недостающие параметры.
@@ -60,6 +64,27 @@ def _asks_supplier(text: str) -> bool:
 
 def _asks_current(text: str) -> bool:
     return any(word in text.lower() for word in ("актуальн", "текущ", "нынешн", "последн", "теперь", "сейчас"))
+
+
+def _local_first(question):
+    if re.search(
+        r"чаще|частот|статист|сравн|обзор|наибольш|наимен|"
+        r"(?:больше|меньше|всего)\s+(?:всего\s+)?отказ|сколько\b.*отказ",
+        question, re.I,
+    ):
+        return False
+    return bool(find_codes(question)) or any(
+        kind == "Component" for kind, _ in find_names(question, vocabulary())
+    )
+
+
+def _tool_errors(steps):
+    errors = {step.tool: step.error for step in steps}
+    if errors.get("summarize_topic") == LOCAL_FIRST and any(
+        step.tool == "search_knowledge" and not step.error for step in steps
+    ):
+        errors.pop("summarize_topic")
+    return errors
 
 
 def _requested_fields(question):
@@ -122,7 +147,7 @@ def _answer_review(
     tools: dict[str, Callable[..., dict]],
 ) -> str | None:
     searches = [(name, value) for name, value in results if name in {"search_knowledge", "summarize_topic"}]
-    latest_errors = {step.tool: step.error for step in steps}
+    latest_errors = _tool_errors(steps)
     if not searches or any(latest_errors.values()):
         return None
     fields = _requested_fields(question)
@@ -185,7 +210,7 @@ def _verified_fields(question, text, results, steps):
         return False
     if not text or "в базе знаний не найдено" in text.lower():
         return False
-    if any({step.tool: step.error for step in steps}.values()):
+    if any(_tool_errors(steps).values()):
         return False
     facts = [fact for _, value in results for fact in value.get("facts", []) if isinstance(fact, str)]
     fact_codes = set(find_codes(" ".join(facts)))
@@ -232,6 +257,7 @@ def run_agent(
     order_reminded = False
     erp_failed = False
     answer_style_set = False
+    supplier_search_reminded = False
 
     def finish(text: str, **kwargs) -> AgentResult:
         if unsupported_facts(text, question, results) or unsupported_erp_claims(text):
@@ -297,7 +323,7 @@ def run_agent(
                 and requested_quantities(question)
                 and "подтвер" in text.lower()
                 and not any(step.tool == "create_service_order" for step in steps)
-                and not any({step.tool: step.error for step in steps}.values())
+                and not any(_tool_errors(steps).values())
             ):
                 order_reminded = True
                 messages.append(
@@ -374,6 +400,14 @@ def run_agent(
                     args = validate_arguments(call.name, args)
                 except (ValueError, TypeError) as exc:
                     error = f"Некорректные аргументы: {exc}"
+            if (
+                not error
+                and call.name == "summarize_topic"
+                and "search_knowledge" in tools
+                and _local_first(question)
+                and not any(name == "search_knowledge" for name, _ in results)
+            ):
+                error = LOCAL_FIRST
             if (
                 not error
                 and call.name == "search_knowledge"
@@ -498,6 +532,25 @@ def run_agent(
                     }
                 results.append((call.name, value))
                 sources.update(value.get("sources", []))
+                if (
+                    not supplier_search_reminded
+                    and call.name == "search_knowledge"
+                    and value.get("refused")
+                    and "поставщик" in _requested_fields(question)
+                    and any(code_type(code) == "Part" for code in find_codes(" ".join(
+                        fact for fact in value.get("facts", []) if isinstance(fact, str)
+                    )))
+                    and not supplier_names_for_answer(question, results)
+                ):
+                    supplier_search_reminded = True
+                    messages.append({"role": "user", "content": (
+                        "Поиск уже показал артикулы детали. Чтобы узнать поставщика, выполни короткий "
+                        "search_knowledge только по одному найденному артикулу и слову «поставщик». "
+                        "Если нужен актуальный поставщик, возьми конечный артикул из цепочки замен. "
+                        "Не добавляй в этот запрос модель, узел, ошибку и старые артикулы: они расширяют "
+                        "контекст, а компания проверяется отдельным фактом. Выбери артикул по уже полученным "
+                        "фактам и сохрани остальные проверенные сведения для итогового ответа."
+                    )})
                 if not answer_style_set:
                     messages[0] = {
                         "role": "system",

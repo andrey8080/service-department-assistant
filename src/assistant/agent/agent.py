@@ -8,11 +8,14 @@ from assistant.agent.tools import TOOL_SCHEMAS, validate_arguments
 from assistant.agent.verification import (
     allowed_codes,
     requested_quantities,
+    supplier_names_for_answer,
     unsupported_erp_claims,
     unsupported_facts,
+    warehouse_matches_question,
 )
+from assistant.infra.config import vocabulary
 from assistant.infra.erp_client import ErpNotFound, ErpRejected, ErpUnavailable
-from assistant.infra.grounding import code_type, find_codes
+from assistant.infra.grounding import code_type, find_codes, find_names
 from assistant.infra.llm import LLMClient, tool_message
 from assistant.infra.schemas import AgentResult, ToolStep
 
@@ -59,6 +62,49 @@ def _asks_current(text: str) -> bool:
     return any(word in text.lower() for word in ("актуальн", "текущ", "нынешн", "последн", "теперь", "сейчас"))
 
 
+def _requested_fields(question):
+    fields = []
+    if re.search(
+        r"артикул|(?:номер|код)\s+детал|"
+        r"(?:какую|какая|какие|назови|укажи|подбери)\s+"
+        r"(?:(?:актуальн|нынешн|нужн|исходн|конечн|последн)\w*\s+)*детал",
+        question, re.I,
+    ):
+        fields.append("артикул детали")
+    if any(word in question.lower() for word in ("регламент", "процедур")):
+        fields.append("код регламента")
+    contacts = re.search(r"телефон|контакт|адрес|электронн\w*\s+почт|e-?mail", question, re.I)
+    if _asks_supplier(question) and not contacts:
+        fields.append("поставщик")
+    if contacts:
+        fields.append("контактные данные")
+    return fields
+
+
+def _known_replacement_query(question, results):
+    parts = {code for code in find_codes(question) if code_type(code) == "Part"}
+    pairs = set()
+    for _, value in results:
+        for fact in value.get("facts", []):
+            if not isinstance(fact, str):
+                continue
+            match = re.fullmatch(r"(P-\d{4}[A-Z]?) -REPLACED_BY-> (P-\d{4}[A-Z]?)", fact)
+            if match:
+                pairs.add(match.groups())
+    return bool(parts) and parts <= {b for a, b in pairs} - {a for a, b in pairs}
+
+
+def _partial_search(question, query, results):
+    if not any(name == "search_knowledge" for name, _ in results):
+        return False
+    codes = set(find_codes(query))
+    names = set(find_names(query, vocabulary()))
+    evidence = question + json.dumps([value.get("facts", []) for _, value in results], ensure_ascii=False)
+    return bool(codes or names) and codes <= allowed_codes(question, results) and names <= set(
+        find_names(evidence, vocabulary())
+    )
+
+
 def _requests_order(question: str) -> bool:
     for match in re.finditer(
         r"\b(?:закажи(?:те)?|оформи(?:те)?\s+заказ|создай(?:те)?\s+заказ)\b", question, re.IGNORECASE
@@ -79,24 +125,47 @@ def _answer_review(
     latest_errors = {step.tool: step.error for step in steps}
     if not searches or any(latest_errors.values()):
         return None
-    if (
-        any(word in question.lower() for word in ("регламент", "процедур"))
-        and not any(code_type(code) == "Procedure" for code in find_codes(text))
-        and "search_knowledge" in tools
-    ):
+    fields = _requested_fields(question)
+    if "контактные данные" in fields:
+        return None if "в базе знаний не найдено" in text.lower() else (
+            "Пользователь спрашивает контактные данные, а не название поставщика. "
+            "Факты SUPPLIED_BY подтверждают только компанию и не подтверждают её телефон или адрес. "
+            "Если инструменты не нашли запрошенные контакты, сообщи «В базе знаний не найдено». "
+            "Не заменяй ответ именем компании и не придумывай контактные данные."
+        )
+    if fields and "search_knowledge" in tools:
         evidence = json.dumps(
             [{key: value[key] for key in ("answer", "facts") if key in value} for _, value in searches],
             ensure_ascii=False,
         )
-        if not any(code_type(code) == "Procedure" for code in find_codes(evidence)):
-            return (
-                "Исходный вопрос просит регламент, а поиск не содержит его кода. "
-                "Перечень деталей и замен не отвечает на эту часть вопроса. Вызови search_knowledge "
-                "отдельно для регламента указанной ошибки, без модели оборудования и перечня деталей. "
-                "Сохрани уже проверенные сведения для других частей ответа. "
-                "Не угадывай номер регламента; если поиск не подтвердит данные, сообщи об этом."
+        missing = []
+        if "код регламента" in fields and not any(code_type(code) == "Procedure" for code in find_codes(text)):
+            missing.append(
+                "Для регламента проверь указанную ошибку отдельным search_knowledge, без модели оборудования."
+                if not any(code_type(code) == "Procedure" for code in find_codes(evidence))
+                else "Код регламента уже есть в результатах поиска: включи его в ответ."
             )
-        return "В результатах поиска уже есть код регламента. Включи его в ответ на исходный вопрос, без новых фактов."
+        if "артикул детали" in fields and not any(code_type(code) == "Part" for code in find_codes(text)) and any(
+            code_type(code) == "Part" for code in find_codes(evidence)
+        ):
+            missing.append("Сохрани в ответе уже проверенный артикул детали, не заменяй его одним названием узла.")
+        if "поставщик" in fields:
+            suppliers = supplier_names_for_answer(question, results, text)
+            if not any(name.lower() in text.lower() for name in suppliers):
+                missing.append(
+                    "Поставщик ещё не подтверждён в ответе. Узнай его отдельным search_knowledge по одному "
+                    "найденному артикулу. Для актуальной детали учитывай всю цепочку замен. "
+                    "В запросе о компании сохрани слово «поставщик». Название линейки не является поставщиком. "
+                    "Если артикул пока не найден, раздели поиск: сначала значение ошибки, затем деталь "
+                    "по модели и найденному узлу, затем поставщик детали. Не повторяй полный вопрос, "
+                    "который уже вернул отказ; промежуточный запрос может спрашивать только один нужный факт."
+                )
+        if missing:
+            return (
+                "Ответ должен включать все запрошенные сведения: " + ", ".join(fields) + ". "
+                + " ".join(missing)
+                + " Сохрани уже проверенные части ответа после уточнений. Не угадывай недостающие данные."
+            )
     if any(value.get("refused") for _, value in searches):
         return None
     if "в базе знаний не найдено" in text.lower():
@@ -108,6 +177,38 @@ def _answer_review(
             "Не придумывай факты."
         )
     return None
+
+
+def _verified_fields(question, text, results, steps):
+    fields = _requested_fields(question)
+    if not fields or set(fields) - {"артикул детали", "код регламента", "поставщик"}:
+        return False
+    if not text or "в базе знаний не найдено" in text.lower():
+        return False
+    if any({step.tool: step.error for step in steps}.values()):
+        return False
+    facts = [fact for _, value in results for fact in value.get("facts", []) if isinstance(fact, str)]
+    fact_codes = set(find_codes(" ".join(facts)))
+    if set(find_codes(question)) - fact_codes:
+        return False
+    known_names = set(find_names(" ".join(facts), vocabulary()))
+    if set(find_names(question, vocabulary())) - known_names:
+        return False
+    mentioned = set(find_codes(text))
+    if "артикул детали" in fields and not any(
+        code_type(code) == "Part" for code in mentioned & fact_codes
+    ):
+        return False
+    if "код регламента" in fields:
+        errors = {code for code in find_codes(question) if code_type(code) == "ErrorCode"}
+        procedures = {code for code in mentioned & fact_codes if code_type(code) == "Procedure"}
+        if not any(f"{error} -FIXED_BY-> {procedure}" in facts for error in errors for procedure in procedures):
+            return False
+    if "поставщик" in fields and not any(
+        name.lower() in text.lower() for name in supplier_names_for_answer(question, results, text)
+    ):
+        return False
+    return not unsupported_facts(text, question, results)
 
 
 def run_agent(
@@ -127,7 +228,7 @@ def run_agent(
     argument_errors: dict[str, list[int]] = {}
     corrections = 0
     search_reminded = False
-    answer_reviewed = False
+    reviewed_results = set()
     order_reminded = False
     erp_failed = False
     answer_style_set = False
@@ -164,7 +265,7 @@ def run_agent(
                     "проверь его через search_knowledge; при отсутствии сведений честно сообщи об этом. "
                     "Не добавляй незапрошенные параметры и не придумывай факты."
                     if erp_claim
-                    else "В ответе есть неподтверждённый код, цена или остаток. Исправь ответ только по "
+                    else "В ответе есть неподтверждённый код, поставщик, цена или остаток. Исправь ответ только по "
                     "вопросу и результатам инструментов. Если данных нет, откажись."
                 )
                 if _asks_supplier(question) and _asks_current(question):
@@ -194,8 +295,9 @@ def run_agent(
                 and "create_service_order" in tools
                 and _requests_order(question)
                 and requested_quantities(question)
-                and "подтверд" in text.lower()
-                and not any(step.tool == "create_service_order" or step.error for step in steps)
+                and "подтвер" in text.lower()
+                and not any(step.tool == "create_service_order" for step in steps)
+                and not any({step.tool: step.error for step in steps}.values())
             ):
                 order_reminded = True
                 messages.append(
@@ -231,12 +333,15 @@ def run_agent(
                     }
                 )
                 continue
-            if not answer_reviewed:
-                review = _answer_review(question, text, results, steps, tools)
-                if review:
-                    answer_reviewed = True
-                    messages.append({"role": "user", "content": review})
-                    continue
+            evidence_key = frozenset(json.dumps([name, value], ensure_ascii=False, sort_keys=True)
+                                     for name, value in results)
+            review = _answer_review(question, text, results, steps, tools)
+            if review and evidence_key not in reviewed_results:
+                reviewed_results.add(evidence_key)
+                messages.append({"role": "user", "content": review})
+                continue
+            if review and "в базе знаний не найдено" not in text.lower():
+                return finish(REFUSAL, refused=True)
             if erp_failed and "erp" not in text.lower() and "учётн" not in text.lower():
                 text += " Данные ERP получить не удалось."
             created = [
@@ -249,7 +354,9 @@ def run_agent(
                 no_data = True
                 if "в базе знаний не найдено" not in text.lower():
                     text += " В базе знаний не найдено."
-            if results and all(value.get("refused", False) for _, value in results):
+            if results and all(value.get("refused", False) for _, value in results) and not _verified_fields(
+                question, text, results, steps
+            ):
                 no_data = True
                 if "в базе знаний не найдено" not in text.lower():
                     text = REFUSAL
@@ -272,6 +379,7 @@ def run_agent(
                 and call.name == "search_knowledge"
                 and _asks_supplier(question)
                 and not _asks_supplier(args["question"])
+                and not _partial_search(question, args["question"], results)
             ):
                 error = (
                     "Поисковый запрос потерял вопрос о поставщике. Уточни search_knowledge: "
@@ -293,6 +401,11 @@ def run_agent(
                 and call.name == "search_knowledge"
                 and _asks_current(question)
                 and not _asks_current(args["question"])
+                and not _known_replacement_query(args["question"], results)
+                and not (
+                    not _asks_supplier(args["question"])
+                    and _partial_search(question, args["question"], results)
+                )
                 and (
                     _asks_supplier(question)
                     or (not _requests_order(question) and not any(name == "search_knowledge" for name, _ in results))
@@ -316,6 +429,12 @@ def run_agent(
                 error = (
                     "Запрос потерял условие исходных деталей из руководств. Передай в summarize_topic "
                     f"исходный вопрос без пересказа: {question}"
+                )
+            if not error and "warehouse" in args and not warehouse_matches_question(question, args["warehouse"]):
+                error = (
+                    "Склад в аргументах отличается от явно указанного пользователем. Не подменяй его другим. "
+                    "Передай запрошенный склад; если он не поддерживается, сообщи об этом без запроса "
+                    "остатков или заказа на другом складе."
                 )
             if not error and "part_id" in args and args["part_id"] not in allowed_codes(question, results):
                 error = "Номер детали нигде не встречался. Сначала вызови search_knowledge."
@@ -388,6 +507,14 @@ def run_agent(
                         "Не переноси свойства детали на модель.",
                     }
                     answer_style_set = True
+                    fields = _requested_fields(question)
+                    if len(fields) > 1:
+                        messages[0]["content"] += (
+                            " В составном вопросе нужны все поля: " + ", ".join(fields)
+                            + ". Если поиск дал не всё, отдельно уточни недостающее через search_knowledge. "
+                            "Для поставщика используй отдельный запрос по найденному артикулу, для регламента "
+                            "— по ошибке. После уточнения не теряй уже найденные части ответа."
+                        )
 
     text = _observations(results)
     if erp_failed:

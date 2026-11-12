@@ -72,7 +72,7 @@ def test_recovered_argument_error_does_not_disable_review_of_an_unjustified_refu
 
     assert not result.refused and "P-9070B" in result.answer
     assert search.call_count == 1 and len(llm.requests) == 4
-    assert "успешного поиска" in llm.requests[-1]["messages"][-1]["content"]
+    assert llm.requests[-1]["messages"][-1]["role"] == "user"
     assert result.steps[0].error and result.steps[0].result["error"]
     assert any("потерял" in message["content"] for message in llm.requests[1]["messages"] if message["role"] == "tool")
     assert any("resolved_error" in message["content"] for message in llm.requests[2]["messages"])
@@ -207,7 +207,8 @@ def test_capability_review_removes_unrequested_supplier_advice_without_calling_e
 
 def test_capability_review_can_request_the_supplier_from_documents():
     question = "Кто поставляет P-4800?"
-    search = Mock(return_value={"answer": "СеверПрибор.", "sources": ["manual.md"], "refused": False})
+    search = Mock(return_value={"answer": "СеверПрибор.", "sources": ["manual.md"], "refused": False,
+                                "facts": ["P-4800 -SUPPLIED_BY-> СеверПрибор"]})
     llm = FakeLLM(
         [
             "Сведения о поставщике можно получить в ERP.",
@@ -287,7 +288,8 @@ def test_supplier_query_keeps_the_requested_replacement_scope(requested, clarifi
     question = f"Назови {requested} деталь для GS-610 и её поставщика."
     short = "поставщик детали для GS-610"
     full = f"{clarified} поставщик детали для GS-610 с учётом замены"
-    search = Mock(return_value={"answer": "P-4800B: Новый завод.", "refused": False, "sources": ["bulletin.md"]})
+    search = Mock(return_value={"answer": "P-4800B: Новый завод.", "refused": False, "sources": ["bulletin.md"],
+                                "facts": ["P-4800B -SUPPLIED_BY-> Новый завод"]})
     llm = FakeLLM(
         [call("search_knowledge", question=short), call("search_knowledge", question=full), "P-4800B: Новый завод."]
     )
@@ -302,7 +304,8 @@ def test_supplier_query_keeps_the_requested_replacement_scope(requested, clarifi
 
 def test_original_supplier_query_does_not_require_a_current_replacement():
     question = "Кто поставляет исходную деталь P-4800 из руководства?"
-    search = Mock(return_value={"answer": "Старый завод.", "refused": False})
+    search = Mock(return_value={"answer": "Старый завод.", "refused": False,
+                                "facts": ["P-4800 -SUPPLIED_BY-> Старый завод"]})
     llm = FakeLLM([call("search_knowledge", question="поставщик P-4800"), "Старый завод."])
 
     result = run_agent(question, llm, {"search_knowledge": search})
@@ -548,10 +551,11 @@ def test_repeated_incomplete_supplier_searches_stop_at_the_step_limit():
     ],
 )
 def test_complete_supplier_queries_and_other_document_questions_are_not_blocked(question, query):
-    search = Mock(return_value={"answer": "Сведения найдены.", "refused": False})
+    search = Mock(return_value={"answer": "P-4800 — Новый завод.", "refused": False,
+                                "facts": ["P-4800 -SUPPLIED_BY-> Новый завод"]})
     result = run_agent(
         question,
-        FakeLLM([call("search_knowledge", question=query), "Сведения найдены."]),
+        FakeLLM([call("search_knowledge", question=query), "P-4800 — Новый завод."]),
         {"search_knowledge": search},
     )
 
@@ -1101,7 +1105,10 @@ def test_procedure_review_respects_previous_search_available_tools_and_step_limi
 
     result = run_agent(question, llm, tools, max_steps=1 if case == "step_limit" else 6)
 
-    assert answer in result.answer and not result.refused
+    if case == "already_local":
+        assert result.refused and "В базе знаний не найдено" in result.answer
+    else:
+        assert answer in result.answer and not result.refused
     assert len(llm.requests) == len(script)
     assert len(result.steps) == (2 if case == "already_local" else 1)
     assert search.call_count == (1 if case == "already_local" else 0)
@@ -1117,7 +1124,7 @@ def test_repeated_wrong_procedure_answer_stops_without_executing_search_in_code(
 
     result = run_agent(question, llm, {"summarize_topic": overview, "search_knowledge": search})
 
-    assert result.answer == answer and len(result.steps) == 1 and len(llm.requests) == 3
+    assert result.refused and result.answer != answer and len(result.steps) == 1 and len(llm.requests) == 3
     search.assert_not_called()
 
 
@@ -1153,7 +1160,7 @@ def test_order_after_answer_review_still_requires_confirmation(confirm):
         call("create_service_order", **order),
     ]
     if confirm:
-        script.append("Заказ SO-987654 создан.")
+        script.append("Регламент SP-141. Заказ SO-987654 создан.")
     llm = FakeLLM(script)
 
     result = run_agent(
@@ -1179,8 +1186,10 @@ def test_order_after_answer_review_still_requires_confirmation(confirm):
     ("Назови поставщика P-9070", "postavshchik P-9070"),
 ])
 def test_search_retry_preserves_the_original_requested_fields(question, lost):
-    found = "SP-151" if "регламент" in question else "Найдено"
-    search = Mock(return_value={"answer": found, "refused": False})
+    found = "P-9070, SP-151" if "регламент" in question else "Новый завод"
+    facts = (["GS-610 -HAS_PART-> P-9070", "E-51 -FIXED_BY-> SP-151"]
+             if "регламент" in question else ["P-9070 -SUPPLIED_BY-> Новый завод"])
+    search = Mock(return_value={"answer": found, "refused": False, "facts": facts})
     llm = FakeLLM([call("search_knowledge", question=lost),
                    call("search_knowledge", question=question), found])
 
@@ -1203,3 +1212,198 @@ def test_a_missing_procedure_is_checked_separately_after_finding_the_part():
     assert not result.refused and result.answer == "P-9070, SP-151."
     assert search.call_count == 2 and len(result.steps) == 2
     assert result.sources == ["manual.md", "procedure.md"]
+
+
+@pytest.mark.parametrize("partial", ["Актуальная деталь P-9070B.", "Поставщик — Север."])
+def test_a_supplier_is_checked_separately_for_the_already_found_replacement(partial):
+    question = "Укажи актуальный номер детали и её поставщика для GS-610."
+    search = Mock(side_effect=[
+        {"answer": "P-9070B", "facts": ["P-9070 -REPLACED_BY-> P-9070B"], "sources": ["notice.md"]},
+        {"answer": "Новый завод", "facts": ["P-9070B -SUPPLIED_BY-> Новый завод"], "sources": ["supplier.md"]},
+    ])
+    llm = FakeLLM([call("search_knowledge", question=question), partial,
+                   call("search_knowledge", question="поставщик P-9070B"), "P-9070B — Новый завод."])
+    result = run_agent(question, llm, {"search_knowledge": search})
+    assert not result.refused and result.answer == "P-9070B — Новый завод."
+    assert search.call_count == 2 and len(result.steps) == 2
+    assert all(not step.error for step in result.steps)
+    assert result.sources == ["notice.md", "supplier.md"]
+    assert "все поля" in llm.requests[1]["messages"][0]["content"]
+
+
+def test_a_failed_composite_search_can_be_split_into_diagnosis_part_and_supplier():
+    question = "На GS-610 ошибка E-51. Нужны артикул контроллера и поставщик."
+    search = Mock(side_effect=[
+        {"answer": "В базе знаний не найдено", "facts": [], "refused": True},
+        {"answer": "контроллер", "facts": ["E-51 -INDICATES-> контроллер"]},
+        {"answer": "P-9070", "facts": ["GS-610 -HAS_PART-> P-9070", "P-9070 -IS_A-> контроллер"]},
+        {"answer": "Новый завод", "facts": ["P-9070 -SUPPLIED_BY-> Новый завод"]},
+    ])
+    llm = FakeLLM([
+        call("search_knowledge", question=question), "В базе знаний не найдено.",
+        call("search_knowledge", question="Что означает E-51?"),
+        call("search_knowledge", question="деталь контроллера GS-610"),
+        call("search_knowledge", question="поставщик P-9070"), "P-9070 — Новый завод.",
+    ])
+    result = run_agent(question, llm, {"search_knowledge": search})
+    assert result.answer == "P-9070 — Новый завод." and not result.refused
+    assert len(result.steps) == 4 and search.call_count == 4
+    assert all(not step.error for step in result.steps)
+
+
+def test_a_partial_search_cannot_introduce_an_unseen_code():
+    question = "Кто поставляет деталь для GS-610?"
+    search = Mock(return_value={"answer": "В базе знаний не найдено", "facts": [], "refused": True})
+    llm = FakeLLM([call("search_knowledge", question=question),
+                   call("search_knowledge", question="деталь для GS-999")])
+    result = run_agent(question, llm, {"search_knowledge": search}, max_steps=2)
+    assert search.call_count == 1 and result.steps[-1].error
+
+
+def test_new_evidence_allows_reviewing_a_missing_field_again():
+    question = "Укажи артикул и поставщика для GS-610."
+    search = Mock(side_effect=[
+        {"answer": "В базе знаний не найдено", "facts": [], "refused": True},
+        {"answer": "P-9070", "facts": ["GS-610 -HAS_PART-> P-9070"]},
+        {"answer": "Новый завод", "facts": ["P-9070 -SUPPLIED_BY-> Новый завод"]},
+    ])
+    llm = FakeLLM([
+        call("search_knowledge", question=question), "В базе знаний не найдено.",
+        call("search_knowledge", question="деталь GS-610"), "Артикул P-9070.",
+        call("search_knowledge", question="поставщик P-9070"), "P-9070 — Новый завод.",
+    ])
+    result = run_agent(question, llm, {"search_knowledge": search})
+    assert not result.refused and result.answer == "P-9070 — Новый завод."
+    assert len(result.steps) == 3
+
+
+def test_a_repeated_incomplete_answer_is_not_a_successful_supplier_answer():
+    question = "Назови поставщика P-9070."
+    search = Mock(return_value={"answer": "SUPPLIED_BY: P-9070",
+                                "facts": ["P-9070 -IS_A-> контроллер"]})
+    llm = FakeLLM([call("search_knowledge", question=question),
+                   "SUPPLIED_BY: P-9070", "SUPPLIED_BY: P-9070"])
+    result = run_agent(question, llm, {"search_knowledge": search})
+    assert result.refused and result.answer == "В базе знаний не найдено достаточно подтверждённых данных для ответа."
+    assert len(llm.requests) == 3
+
+
+def test_repeated_cached_search_does_not_reset_the_same_missing_field_review():
+    question = "Назови поставщика P-9070."
+    search = Mock(return_value={"answer": "P-9070", "facts": ["P-9070 -IS_A-> контроллер"]})
+    llm = FakeLLM([call("search_knowledge", question=question), "P-9070",
+                   call("search_knowledge", question=question), "P-9070"])
+    result = run_agent(question, llm, {"search_knowledge": search})
+    assert result.refused and len(llm.requests) == 4 and len(result.steps) == 2
+    assert search.call_count == 1
+
+
+@pytest.mark.parametrize("company", ["Старый завод", "ХолодКомплект"])
+def test_current_supplier_cannot_be_confirmed_by_the_original_part(company):
+    evidence = [("search_knowledge", {
+        "refused": True,
+        "facts": ["P-9070 -REPLACED_BY-> P-9070B", f"P-9070 -SUPPLIED_BY-> {company}"],
+    })]
+    assert company in unsupported_facts(company, "Кто сейчас поставляет P-9070?", evidence)
+
+
+@pytest.mark.parametrize("warehouse, question", [
+    ("Санкт-Петербург", "Проверь P-9070 именно на складе Пенза."),
+    ("Москва", "Есть ли P-9070 на складе в Казани?"),
+    ("Казань", "Закажи 2 шт. P-9070 для GS-610 со склада Москва."),
+])
+def test_explicit_warehouse_cannot_be_replaced_by_a_different_valid_one(warehouse, question):
+    tool = "create_service_order" if question.startswith("Закажи") else "check_stock"
+    args = {"part_id": "P-9070", "warehouse": warehouse}
+    if tool == "create_service_order":
+        args.update(qty=2, model="GS-610")
+    function = Mock()
+    llm = FakeLLM([call(tool, **args), "В базе знаний не найдено данных об указанном складе."])
+    result = run_agent(question, llm, {tool: function})
+    function.assert_not_called()
+    assert result.refused and result.steps[0].error and not result.needs_confirmation
+
+
+@pytest.mark.parametrize("question, warehouse", [
+    ("Есть ли P-9070 в Казани?", "Казань"),
+    ("Есть ли P-9070 на складе Москвы?", "Москва"),
+    ("Сколько P-9070 в Санкт-Петербурге?", "Санкт-Петербург"),
+    ("Проверь склад Новосибирск для P-9070.", "Новосибирск"),
+    ("На каких складах есть P-9070?", "Москва"),
+])
+def test_warehouse_validation_keeps_inflections_and_unspecified_locations(question, warehouse):
+    stock = Mock(return_value={"part_id": "P-9070", "warehouse": warehouse, "qty": 4})
+    llm = FakeLLM([call("check_stock", part_id="P-9070", warehouse=warehouse), "Остаток 4 шт."])
+    result = run_agent(question, llm, {"check_stock": stock})
+    assert not result.refused and not result.steps[0].error
+    stock.assert_called_once_with(part_id="P-9070", warehouse=warehouse)
+
+
+def test_refused_local_answers_do_not_discard_a_supplier_proven_by_accumulated_facts():
+    question = "Кто сейчас поставляет контроллер GS-610?"
+    search = Mock(side_effect=[
+        {"answer": "В базе знаний не найдено", "refused": True, "facts": [
+            "GS-610 -HAS_PART-> P-9070", "P-9070 -IS_A-> контроллер", "P-9070 -REPLACED_BY-> P-9070B",
+        ]},
+        {"answer": "В базе знаний не найдено", "refused": True,
+         "facts": ["P-9070B -SUPPLIED_BY-> Новый завод"]},
+    ])
+    llm = FakeLLM([call("search_knowledge", question=question),
+                   call("search_knowledge", question="поставщик P-9070B"), "Новый завод."])
+    result = run_agent(question, llm, {"search_knowledge": search})
+    assert not result.refused and result.answer == "Новый завод."
+    assert search.call_count == 2
+
+
+@pytest.mark.parametrize("question, answer, facts", [
+    ("Какой артикул детали нужен при E-51?", "Нужен насос.", ["E-51 -INDICATES-> насос"]),
+    ("Кто поставляет деталь для AR-999?", "ТермоПрибор.", ["P-9070 -SUPPLIED_BY-> ТермоПрибор"]),
+    ("Какой регламент при E-51?", "SP-151.", ["E-51 -INDICATES-> насос", "E-52 -FIXED_BY-> SP-151"]),
+])
+def test_partial_facts_cannot_turn_a_failed_lookup_into_an_unproven_answer(question, answer, facts):
+    search = Mock(return_value={"answer": "В базе знаний не найдено", "refused": True, "facts": facts})
+    llm = FakeLLM([call("search_knowledge", question=question), answer])
+    result = run_agent(question, llm, {"search_knowledge": search})
+    assert result.refused and "В базе знаний не найдено" in result.answer
+
+
+def test_a_part_request_keeps_the_article_after_a_supplier_lookup():
+    question = "Назови деталь и её поставщика для устранения E-51 на GS-610."
+    search = Mock(return_value={
+        "answer": "контроллер, Новый завод", "facts": [
+            "E-51 -INDICATES-> контроллер", "GS-610 -HAS_PART-> P-9070",
+            "P-9070 -IS_A-> контроллер", "P-9070 -SUPPLIED_BY-> Новый завод",
+        ],
+    })
+    llm = FakeLLM([call("search_knowledge", question=question),
+                   "Контроллер, поставщик Новый завод.", "P-9070, поставщик Новый завод."])
+    result = run_agent(question, llm, {"search_knowledge": search})
+    assert not result.refused and "P-9070" in result.answer
+    assert len(result.steps) == 1 and len(llm.requests) == 3
+
+
+@pytest.mark.parametrize("attribute", ["телефон", "контактный адрес", "e-mail"])
+@pytest.mark.parametrize("refused", [True, False])
+def test_a_supplier_name_does_not_answer_a_contact_question(attribute, refused):
+    question = f"Какой {attribute} указан у поставщика ГидроТех?"
+    search = Mock(return_value={"answer": "ГидроТех", "refused": refused,
+                                "facts": ["P-9070 -SUPPLIED_BY-> ГидроТех"]})
+    llm = FakeLLM([call("search_knowledge", question=question), "ГидроТех", "ГидроТех"])
+    result = run_agent(question, llm, {"search_knowledge": search})
+    assert result.refused and "В базе знаний не найдено" in result.answer
+
+
+@pytest.mark.parametrize("confirmation", ["Подтвердите заказ.", "Требуется ваше подтверждение заказа."])
+@pytest.mark.parametrize("recovered_error", [True, False])
+def test_both_confirmation_wordings_prepare_a_pending_order(confirmation, recovered_error):
+    question = "Оформи заказ на 2 шт. P-9070 для GS-610 со склада Москва."
+    order = {"part_id": "P-9070", "model": "GS-610", "warehouse": "Москва", "qty": 2}
+    price = Mock(return_value={"part_id": "P-9070", "price_rub": 5500})
+    create = Mock()
+    script = [call("get_price", part_id="GS-610")] if recovered_error else []
+    script.extend([call("get_price", part_id="P-9070"), confirmation,
+                   call("create_service_order", **order)])
+    llm = FakeLLM(script)
+    result = run_agent(question, llm, {"get_price": price, "create_service_order": create})
+    assert result.needs_confirmation and result.pending_action == {"tool": "create_service_order", "args": order}
+    create.assert_not_called()

@@ -59,8 +59,14 @@ class _Extraction(BaseModel):
 
 
 def _document_links(text: str, names: dict[str, list[str]]) -> dict[str, set[tuple[str, str]]]:
-    links: dict[str, set[tuple[str, str]]] = {"BELONGS_TO": set(), "FIXED_BY": set()}
+    links: dict[str, set[tuple[str, str]]] = {"BELONGS_TO": set(), "FIXED_BY": set(), "SUPPLIED_BY": set()}
     for sentence in re.split(r"[.!?\n]+", text):
+        supplier = re.search(r"\bпоставщик\s+детали\s+(.+?)\s+[–—-]\s+(.+)", sentence, re.I)
+        if supplier and not re.search(r"\bне\b", supplier.group(2), re.I):
+            parts = find_codes(supplier.group(1))
+            suppliers = [name for kind, name in find_names(supplier.group(2), names) if kind == "Supplier"]
+            if len(parts) == len(suppliers) == 1 and code_type(parts[0]) == "Part":
+                links["SUPPLIED_BY"].add((parts[0], suppliers[0]))
         membership = re.search(r"\bвходит\s+в\s+линейку\s+(.+)", sentence, re.I)
         models = [code for code in find_codes(sentence) if code_type(code) == "Model"]
         if membership and len(models) == 1 and not re.search(r"\bне\s+$", sentence[: membership.start()], re.I):
@@ -137,6 +143,11 @@ def _schema_issues(
         }
         for start, end in sorted(expected - present):
             subject_type, object_type = RELATION_SIGNATURES[kind]
+            if kind == "SUPPLIED_BY" and not all(
+                any(t == entity_type and canonical_name(t, name, names) == value for t, name in mentions)
+                for entity_type, value in ((subject_type, start), (object_type, end))
+            ):
+                continue
             example = {
                 "entities": [{"type": subject_type, "name": start}, {"type": object_type, "name": end}],
                 "relations": [{
@@ -248,6 +259,11 @@ def extract_chunk(chunk: Chunk, llm: LLMClient) -> ExtractionResult:
             if attempt and not candidate.entities and not candidate.relations:
                 break
             for row in candidate.relations:
+                if row.type == "SUPPLIED_BY" and (row.subject_type, row.object_type) == ("Supplier", "Part"):
+                    supplier, part = _row_ends(row, names)
+                    if (part, supplier) in document_links["SUPPLIED_BY"]:
+                        row.subject_type, row.object_type = row.object_type, row.subject_type
+                        row.subject, row.object = row.object, row.subject
                 if row.type == "FIXED_BY" and (row.subject_type, row.object_type) == ("Procedure", "ErrorCode"):
                     procedure, error = _row_ends(row, names)
                     if (error, procedure) in document_links["FIXED_BY"]:

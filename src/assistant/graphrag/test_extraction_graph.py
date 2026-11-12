@@ -574,3 +574,33 @@ def test_empty_graph_and_entities_without_relations_are_preserved():
     graph = build_graph([ExtractionResult("a.md#0", "a.md", [part])])
     assert graph.nodes[part.node_id] == {"type": "Part", "name": "P-1042", "sources": ["a.md#0"]}
     assert graph.number_of_edges() == 0
+
+
+def test_explicit_supplier_direction_is_normalized_without_losing_other_relations():
+    text = "Деталь P-4321 заменена на P-9876C. Поставщик детали P-9876C – «ТермоПрибор»."
+    reply = replacement_response("P-4321", "P-9876C")
+    data = json.loads(reply)
+    data["relations"][-1] = {
+        "subject_type": "Supplier", "subject": "ТермоПрибор", "type": "SUPPLIED_BY",
+        "object_type": "Part", "object": "P-9876C",
+    }
+    llm = FakeLLM([json.dumps(data, ensure_ascii=False)])
+
+    result = extract_chunk(Chunk("notice.md#0", "notice.md", text), llm)
+
+    assert Relation(Entity("Part", "P-9876C"), "SUPPLIED_BY", Entity("Supplier", "ТермоПрибор")) in result.relations
+    assert any(relation.type == "REPLACED_BY" for relation in result.relations)
+    assert len(llm.requests) == 1
+
+
+@pytest.mark.parametrize("suffix", ["не «ТермоПрибор»", "«ТермоПрибор» или «ВентПром»"])
+def test_uncertain_supplier_text_does_not_reverse_the_relation(suffix):
+    row = {"subject_type": "Supplier", "subject": "ТермоПрибор", "type": "SUPPLIED_BY",
+           "object_type": "Part", "object": "P-9876C"}
+    data = json.dumps({"entities": [], "relations": [row]}, ensure_ascii=False)
+    text = f"Поставщик детали P-9876C – {suffix}."
+    llm = FakeLLM([data, '{"entities": [], "relations": []}'])
+
+    result = extract_chunk(Chunk("notice.md#0", "notice.md", text), llm)
+
+    assert not result.relations

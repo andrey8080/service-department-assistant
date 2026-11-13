@@ -387,7 +387,6 @@ def test_repeated_text_confirmation_does_not_claim_a_prepared_order():
         "Сколько стоят 3 шт. P-4800B?",
         "Не оформи заказ на 3 шт. P-4800B.",
         "Как оформить заказ на 3 шт. P-4800B?",
-        "Оформи заказ P-4800B, количество уточним позже.",
     ],
 )
 def test_confirmation_reminder_does_not_invent_an_order_request_or_quantity(question):
@@ -398,6 +397,208 @@ def test_confirmation_reminder_does_not_invent_an_order_request_or_quantity(ques
 
     create.assert_not_called()
     assert len(llm.requests) == 1 and result.pending_action is None
+
+
+@pytest.mark.parametrize("wording", [
+    "Подготовь заказ на две штуки",
+    "Подготовьте, пожалуйста, заказ на две штуки",
+    "Собери заявку на две штуки",
+    "Оформи сервисную заявку на две штуки",
+    "Создай новый заказ на две штуки",
+    "Хочу заказать две штуки",
+    "Прошу подготовить заказ на две штуки",
+    "Можешь, пожалуйста, оформить заявку на две штуки",
+    "Мне нужно заказать две штуки",
+    "Скажи, какую деталь нужно заказать, и подготовь заказ на две штуки",
+])
+@pytest.mark.parametrize("draft", ["Собираю заказ.", "Заявка подготовлена, жду вашего решения."])
+def test_order_requests_need_an_action_even_when_the_draft_does_not_ask_for_confirmation(wording, draft):
+    create = Mock()
+    llm = FakeLLM([draft, call("create_service_order", **ORDER)])
+
+    result = run_agent(f"{wording} P-1042B для AR-210, склад Казань.", llm, {"create_service_order": create})
+
+    create.assert_not_called()
+    assert result.needs_confirmation and not result.refused
+    assert result.pending_action == {"tool": "create_service_order", "args": ORDER}
+    assert len(llm.requests) == 2 and len(result.steps) == 1
+    assert result.steps[0].error == "Ожидается подтверждение человека"
+
+
+@pytest.mark.parametrize("wording", [
+    "Не подготовь заказ на 2 шт.",
+    "Не надо, пожалуйста, оформи заказ на 2 шт.",
+    "Не хочу заказать 2 шт.",
+    "Не нужно подготовить заказ на 2 шт.",
+    "Как подготовить заказ на 2 шт.",
+    "Хочу узнать, как нужно оформить заказ на 2 шт.",
+    "Объясни, как мне нужно подготовить заказ на 2 шт.",
+    "Подготовь список цен для заказа на 2 шт.",
+    "Какую деталь заказать при ошибке, если нужны 2 шт.",
+    "Сколько стоят 2 шт.",
+])
+def test_advice_and_negated_requests_do_not_trigger_order_preparation(wording):
+    create = Mock()
+    llm = FakeLLM(["Для подготовки заказа нужны параметры и подтверждение."])
+
+    result = run_agent(f"{wording} P-1042B для AR-210, склад Казань.", llm, {"create_service_order": create})
+
+    create.assert_not_called()
+    assert not result.needs_confirmation and result.pending_action is None
+    assert len(llm.requests) == 1 and not result.steps
+
+
+@pytest.mark.parametrize("question", [
+    "Какую деталь нужно заказать при E-17 на AR-210?",
+    "Что надо заказать при E-17 на AR-210?",
+    "Какой артикул нужно заказать для AR-210?",
+    "Сколько нужно заказать деталей P-2118 для BZ-220?",
+])
+def test_selection_questions_are_not_replaced_with_a_request_for_order_quantity(question):
+    create = Mock()
+    answer = "Проверю сведения в базе знаний."
+    llm = FakeLLM([answer])
+
+    result = run_agent(question, llm, {"create_service_order": create})
+
+    create.assert_not_called()
+    assert result.answer == answer and len(llm.requests) == 1
+    assert not result.needs_confirmation and result.pending_action is None
+
+
+@pytest.mark.parametrize("confirm", [False, True])
+@pytest.mark.parametrize("quantity", [
+    "", "на 0 шт.", "на -2 шт.", "на −2 шт.", "на 2,5 шт.", "на 2–3 шт.", "на 2 или 3 шт.",
+    ", количество уточним позже", ", на складе есть 3 шт.",
+    "на минус два шт.", "на две-три штуки", ". Раньше заказывал 3 шт.",
+])
+def test_unknown_or_ambiguous_order_quantity_is_clarified_before_the_model(quantity, confirm):
+    create = Mock()
+    llm = FakeLLM([])
+
+    result = run_agent(
+        f"Оформи заявку {quantity} P-2118 для BZ-220, склад Москва.", llm,
+        {"create_service_order": create}, confirm=confirm,
+    )
+
+    create.assert_not_called()
+    assert not llm.requests and not result.steps
+    assert not result.refused and not result.needs_confirmation and result.pending_action is None
+    assert all(value in result.answer for value in ("Сколько штук", "количество", "P-2118", "BZ-220", "Москва"))
+    assert "0 шт." not in result.answer
+
+
+def test_unrequested_order_is_blocked_before_invalid_arguments_are_checked():
+    create = Mock()
+    arguments = {"part_id": "P-2118", "model": "Бриз", "warehouse": "Москва", "qty": 0}
+    clarification = "Уточните, хотите ли вы подготовить заказ."
+    llm = FakeLLM([call("create_service_order", **arguments), clarification])
+
+    result = run_agent(
+        "Нужен P-2118 для BZ-220, склад Москва; количество ещё не указано.", llm,
+        {"create_service_order": create}, confirm=True,
+    )
+
+    create.assert_not_called()
+    assert len(result.steps) == 1 and result.steps[0].args == arguments
+    assert result.pending_action is None and not result.refused
+    assert result.answer == clarification and "не просил" in result.steps[0].error
+    assert "Некорректные аргументы" not in result.steps[0].error
+
+
+@pytest.mark.parametrize("confirm", [False, True])
+@pytest.mark.parametrize("wording", [
+    "Не оформляй заказ на 2 шт.",
+    "Не хочу заказать 2 шт.",
+    "Сколько стоят 2 шт.",
+    "Объясни, как нужно оформить заказ на 2 шт.",
+])
+def test_model_cannot_prepare_or_submit_an_unrequested_order(wording, confirm):
+    create = Mock()
+    llm = FakeLLM([call("create_service_order", **ORDER), "Заказ не создан."])
+
+    result = run_agent(f"{wording} P-1042B для AR-210, склад Казань.", llm,
+                       {"create_service_order": create}, confirm=confirm)
+
+    create.assert_not_called()
+    assert not result.needs_confirmation and result.pending_action is None
+    assert len(result.steps) == 1 and "не просил" in result.steps[0].error
+
+
+@pytest.mark.parametrize("question,order", [
+    ("Закажи на складе в Казани 2 шт. P-1042B для AR-210.", ORDER),
+    ("Оформи заказ на складе Москва на 3 шт. P-4800B для GS-610.",
+     {"part_id": "P-4800B", "model": "GS-610", "warehouse": "Москва", "qty": 3}),
+])
+def test_warehouse_before_quantity_does_not_turn_the_order_into_a_stock_statement(question, order):
+    create = Mock()
+    llm = FakeLLM([call("create_service_order", **order)])
+
+    result = run_agent(question, llm, {"create_service_order": create})
+
+    create.assert_not_called()
+    assert result.needs_confirmation and result.pending_action == {"tool": "create_service_order", "args": order}
+    assert len(llm.requests) == 1
+
+
+@pytest.mark.parametrize("question,clarification", [
+    ("Подготовь заказ на 2 шт. P-1042B для AR-210.", "Укажите склад."),
+    ("Собери заявку на 2 шт. P-1042B, склад Казань.", "Уточните модель оборудования."),
+])
+def test_request_for_other_missing_order_fields_is_not_replaced_with_a_forced_tool_call(question, clarification):
+    create = Mock()
+    llm = FakeLLM([clarification])
+
+    result = run_agent(question, llm, {"create_service_order": create})
+
+    create.assert_not_called()
+    assert result.answer == clarification and not result.refused
+    assert result.pending_action is None and len(llm.requests) == 1
+
+
+def test_preparation_without_submission_still_requires_confirmation():
+    create = Mock()
+    llm = FakeLLM(["Готовлю заявку.", call("create_service_order", **ORDER)])
+
+    result = run_agent(
+        "Подготовь заказ на 2 шт. P-1042B для AR-210, склад Казань, но не отправляй без подтверждения.",
+        llm, {"create_service_order": create},
+    )
+
+    create.assert_not_called()
+    assert result.needs_confirmation and result.pending_action == {"tool": "create_service_order", "args": ORDER}
+
+
+def test_repeated_preparation_promise_without_an_action_is_reported_as_a_failure():
+    create = Mock()
+    llm = FakeLLM(["Заявка подготовлена.", "Заявка подготовлена."])
+
+    result = run_agent("Подготовь заказ на 2 шт. P-1042B для AR-210, склад Казань.",
+                       llm, {"create_service_order": create})
+
+    create.assert_not_called()
+    assert result.refused and not result.needs_confirmation and result.pending_action is None
+    assert "Не удалось подготовить" in result.answer and len(llm.requests) == 2
+
+
+@pytest.mark.parametrize("question,expected", [
+    ("Подготовь заявку на два реле P-1042B.", {2}),
+    ("Закажи 3 шт. P-1042B, но не 5 шт.", {3}),
+    ("Закажи 3 шт. P-1042B, кроме 5 шт.", {3}),
+    ("Закажи 2 шт. P-1042B, на складе осталось 3 шт.", {2}),
+    ("Закажи P-1042B, доступно 3 шт., цена 2000 руб.", set()),
+    ("Закажи −2 шт. P-1042B.", set()),
+    ("Закажи от 2 до 3 шт. P-1042B.", set()),
+    ("Закажи 2–3 шт. P-1042B.", set()),
+    ("Закажи минус два шт. P-1042B.", set()),
+    ("Закажи две-три штуки P-1042B.", set()),
+    ("Закажи на складе в Казани 2 шт. P-1042B.", {2}),
+    ("Оформи заказ на складе Москва на 3 шт. P-4800B.", {3}),
+    ("Оформи заявку P-2118. Раньше заказывал 3 шт.", set()),
+    ("Раньше заказывал 3 шт. Теперь закажи 2 шт. P-2118.", {2}),
+])
+def test_order_quantity_excludes_stock_ranges_and_negated_values(question, expected):
+    assert requested_quantities(question) == expected
 
 
 def test_confirmation_reminder_cannot_authorize_an_unknown_part():

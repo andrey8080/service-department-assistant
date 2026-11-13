@@ -4,7 +4,7 @@ import json
 import re
 from collections.abc import Callable
 
-from assistant.agent.tools import TOOL_SCHEMAS, validate_arguments
+from assistant.agent.tools import TOOL_SCHEMAS, WAREHOUSES, validate_arguments
 from assistant.agent.verification import (
     allowed_codes,
     requested_quantities,
@@ -131,12 +131,48 @@ def _partial_search(question, query, results):
 
 
 def _requests_order(question: str) -> bool:
+    object_name = r"(?:(?:мне|нам|пожалуйста|сервисн\w*|нов\w*)[\s,]+){0,3}(?:заказ|заявк[ау])"
     for match in re.finditer(
-        r"\b(?:закажи(?:те)?|оформи(?:те)?\s+заказ|создай(?:те)?\s+заказ)\b", question, re.IGNORECASE
+        rf"\b(?:(?P<command>закажи(?:те)?|"
+        rf"(?:оформи(?:те)?|создай(?:те)?|подготовь(?:те)?|собери(?:те)?)[\s,]+{object_name})|"
+        rf"(?:хочу|хотим|прошу|просим|нужно|надо|необходимо|можешь|можете)[\s,]+"
+        rf"(?:пожалуйста[\s,]+)?(?:заказать|(?:оформить|создать|подготовить|собрать)[\s,]+{object_name}))\b",
+        question, re.IGNORECASE,
     ):
-        if not re.search(r"\bне\s*$", question[: match.start()], re.IGNORECASE):
+        prefix = question[:match.start()]
+        negated = re.search(
+            r"\bне[\s,]+(?:(?:нужно|надо|следует|стоит)[\s,]+)?(?:пожалуйста[\s,]+)?$", prefix, re.I,
+        )
+        instructional = re.search(r"\b(?:как|когда|зачем|почему)\s+(?:(?:мне|нам|лучше|правильно)\s+)*$",
+                                  prefix, re.I)
+        selection = not match.group("command") and re.search(
+            r"\b(?:что|чего|сколько|какую|какой|какие|какая|какое|какого|каких)\b",
+            re.split(r"[,;.!?\n]", prefix)[-1], re.I,
+        )
+        if not negated and not instructional and not selection:
             return True
     return False
+
+
+def _quantity_question(question: str) -> str:
+    codes = [code for code in dict.fromkeys(find_codes(question)) if code_type(code) in {"Part", "Model"}]
+    warehouses = [name for name in WAREHOUSES if warehouse_matches_question(question, name)]
+    if 0 < len(warehouses) < len(WAREHOUSES):
+        codes.append("склад: " + ", ".join(warehouses))
+    details = " В запросе указаны: " + "; ".join(codes) + "." if codes else ""
+    return "Сколько штук нужно заказать? Укажите одно положительное целое количество." + details
+
+
+def _order_details_known(question: str, results: list[tuple[str, dict]]) -> bool:
+    codes = allowed_codes(question, results)
+    warehouses = [name for name in WAREHOUSES if warehouse_matches_question(question, name)]
+    return (
+        any(code_type(code) == "Part" for code in codes)
+        and any(code_type(code) == "Model" for code in find_codes(question))
+        and (0 < len(warehouses) < len(WAREHOUSES) or any(
+            value.get("warehouse") in WAREHOUSES for _, value in results
+        ))
+    )
 
 
 def _answer_review(
@@ -265,6 +301,11 @@ def run_agent(
             kwargs["refused"] = True
         return AgentResult(text, steps=list(steps), sources=sorted(sources), **kwargs)
 
+    quantities = requested_quantities(question)
+    order_requested = _requests_order(question)
+    if "create_service_order" in tools and order_requested and len(quantities) != 1:
+        return finish(_quantity_question(question))
+
     while len(steps) < max_steps:
         schemas = TOOL_SCHEMAS
         if order_reminded and not confirm:
@@ -319,9 +360,9 @@ def run_agent(
             if (
                 not order_reminded
                 and "create_service_order" in tools
-                and _requests_order(question)
-                and requested_quantities(question)
-                and "подтвер" in text.lower()
+                and order_requested
+                and len(quantities) == 1
+                and _order_details_known(question, results)
                 and not any(step.tool == "create_service_order" for step in steps)
                 and not any(_tool_errors(steps).values())
             ):
@@ -330,7 +371,7 @@ def run_agent(
                     {
                         "role": "user",
                         "content": (
-                            "Ты просишь подтвердить заказ, но его параметры ещё не переданы программе. "
+                            "Пользователь просит подготовить заказ, но его параметры ещё не переданы программе. "
                             "Вызови create_service_order с проверенными параметрами из вопроса и результатов поиска. "
                             "Программа сама запросит подтверждение. Текстовое обещание не подготавливает заказ. "
                             "Следующий ответ должен содержать вызов функции, а не просьбу подтвердить в тексте. "
@@ -395,6 +436,11 @@ def run_agent(
             error = None
             if call.name not in tools:
                 error = "Неизвестный инструмент"
+            elif call.name == "create_service_order" and not order_requested:
+                error = (
+                    "Пользователь не просил подготовить заказ. Ответь на его вопрос без создания заказа "
+                    "и без запроса подтверждения."
+                )
             else:
                 try:
                     args = validate_arguments(call.name, args)
@@ -442,7 +488,7 @@ def run_agent(
                 )
                 and (
                     _asks_supplier(question)
-                    or (not _requests_order(question) and not any(name == "search_knowledge" for name, _ in results))
+                    or (not order_requested and not any(name == "search_knowledge" for name, _ in results))
                 )
             ):
                 error = (
@@ -473,7 +519,7 @@ def run_agent(
             if not error and "part_id" in args and args["part_id"] not in allowed_codes(question, results):
                 error = "Номер детали нигде не встречался. Сначала вызови search_knowledge."
             if not error and call.name == "create_service_order":
-                if args["qty"] not in requested_quantities(question):
+                if args["qty"] not in quantities:
                     steps.append(ToolStep(call.name, args, error="Пользователь не указал это количество"))
                     return finish("Сколько штук нужно заказать? Укажите количество.")
                 if not confirm:

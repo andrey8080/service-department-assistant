@@ -25,7 +25,7 @@ _ERP_LOOKUP = re.compile(
     re.IGNORECASE,
 )
 _ORDER_COUNT = re.compile(
-    r"(?:количеств\w*|закаж\w*|заказ(?:ать)?(?:\s+на)?)\s*[:=]?\s*$", re.IGNORECASE
+    r"(?:количеств\w*|закаж\w*|(?:заказ(?:ать)?|заявк[ау])(?:\s+на)?)\s*[:=]?\s*$", re.IGNORECASE
 )
 _OTHER_UNIT = re.compile(
     r"\s*(?:руб\w*|₽|р\.|%|час\w*|минут\w*|секунд\w*|дн\w*|день\b|дней\b|сут\w*|:\d)",
@@ -46,6 +46,9 @@ _WORD_COUNTS = {
     "девять": 9,
     "десять": 10,
 }
+_STOCK_COUNT_CONTEXT = re.compile(r"остат\w*|остал\w*|доступн\w*|в\s+наличии|\bесть\b|\bиме(?:ется|ются)\b", re.I)
+_COUNT_RANGE_END = re.compile(r"\s*[-–—]\s*(?:\d|(?:" + "|".join(_WORD_COUNTS) + r")\b)", re.I)
+_PAST_COUNT_CONTEXT = re.compile(r"\b(?:раньше|ранее|вчера|прежде)\b|\b(?:заказывал|заказал|заказали)\b", re.I)
 
 
 def _number(value) -> Decimal:
@@ -55,9 +58,22 @@ def _number(value) -> Decimal:
 def requested_quantities(question: str) -> set[int]:
     """Числа рядом с количеством/единицами или глаголом заказа; цифры кодов не подходят."""
     found = set()
+
+    def background(start, end):
+        prefix = re.split(r"[,;.!?\n]", question[:start])[-1]
+        if re.search(r"[−–—-]\s*$|\b(?:не|кроме|без|минус)\s*$|\bот\s+\d+\s+до\s*$", prefix, re.I):
+            return True
+        if _COUNT_RANGE_END.match(question[end:]):
+            return True
+        stocks = list(_STOCK_COUNT_CONTEXT.finditer(prefix))
+        history = list(_PAST_COUNT_CONTEXT.finditer(prefix))
+        orders = list(_ORDER_CONTEXT.finditer(prefix))
+        background_positions = [match.start() for match in stocks + history]
+        return bool(background_positions and (not orders or max(background_positions) >= orders[-1].start()))
+
     for match in re.finditer(_NUMBER, question):
         value = _number(match.group())
-        if value <= 0 or value != value.to_integral_value():
+        if value <= 0 or value != value.to_integral_value() or background(match.start(), match.end()):
             continue
         units = re.match(r"\s*(?:шт\w*|единиц\w*)", question[match.end() :], re.IGNORECASE)
         order = _ORDER_COUNT.search(question[: match.start()])
@@ -65,6 +81,8 @@ def requested_quantities(question: str) -> set[int]:
             found.add(int(value))
     for word, count in _WORD_COUNTS.items():
         for match in re.finditer(rf"\b{word}\b", question, re.IGNORECASE):
+            if background(match.start(), match.end()):
+                continue
             suffix = question[match.end() :]
             units = re.match(r"\s*(?:шт\w*|единиц\w*)", suffix, re.IGNORECASE)
             order = _ORDER_COUNT.search(question[: match.start()])
@@ -203,7 +221,7 @@ def unsupported_erp_claims(text: str) -> bool:
 
 
 _PART_MENTION = re.compile(r"(?<![\w-])[PРрp][- ]?\d{4}[A-Za-zА-Яа-я]?(?![\w-])")
-_ORDER_CONTEXT = re.compile(r"заказ\w*|закаж\w*|заказать|количество\s+(?:заказа|к\s+заказу)", re.I)
+_ORDER_CONTEXT = re.compile(r"заказ\w*|закаж\w*|заказать|заявк\w*|количество\s+(?:заказа|к\s+заказу)", re.I)
 _STOCK_CONTEXT = re.compile(r"остат\w*|налич\w*|на\s+складе|доступно|\bесть\b|\bиме(?:ется|ются)\b", re.I)
 _FRAGMENTS = re.compile(r"\n+|[!?;]\s*|(?<!руб)(?<!шт)(?<!р)\.\s+|(?<!\d),|,(?!\d)|\s+и\s+", re.I)
 

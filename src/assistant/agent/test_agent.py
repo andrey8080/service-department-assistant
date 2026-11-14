@@ -1,3 +1,4 @@
+import hashlib
 import json
 from unittest.mock import Mock
 
@@ -19,6 +20,355 @@ ORDER = {"part_id": "P-1042B", "warehouse": "Казань", "qty": 2, "model": "
 
 def call(name, **arguments):
     return LLMResponse("", [ToolCall("test-call", name, arguments)])
+
+
+@pytest.fixture
+def complete_overview():
+    return {
+        "answer": "AR-751 — двигатель: 2; всего: 2.\nAR-752 — двигатель: 6; всего: 6.",
+        "facts": ["AR-751 -FAILED-> двигатель", "AR-752 -FAILED-> двигатель"],
+        "sources": ["visit_second.md", "visit_first.md"],
+        "refused": False,
+        "complete": True,
+    }
+
+
+@pytest.mark.parametrize("question,tool,system_sha256", [
+    (
+        "Какой артикул насоса для GS-751?", "search_knowledge",
+        "f208650c98576c468e74af13b631895733a3430b3ff91f90ddb969e4ba579790",
+    ),
+    (
+        "Можно ли одним артикулом заменить насос на GS-751 и GS-752? Сопоставь модель и деталь.",
+        "search_knowledge", "f208650c98576c468e74af13b631895733a3430b3ff91f90ddb969e4ba579790",
+    ),
+    (
+        "Сравни отказы насосов у GS-751 и GS-752.", "summarize_topic",
+        "586037c78fa239acd4fa5b74d44e54c13dd86f7da6fb692a9054a74e0db01233",
+    ),
+])
+def test_local_and_overview_instructions_preserve_their_exact_base_after_style_changes(question, tool, system_sha256):
+    evidence = {"answer": "Проверка завершена.", "refused": False}
+    llm = FakeLLM([call(tool, question=question), "Проверка завершена."])
+
+    run_agent(question, llm, {tool: Mock(return_value=evidence)})
+
+    first_system = llm.requests[0]["messages"][0]["content"]
+    assert hashlib.sha256(first_system.encode()).hexdigest() == system_sha256
+    styled_system = llm.requests[1]["messages"][0]["content"]
+    assert styled_system.startswith(first_system + "\nКогда все нужные проверки закончены")
+
+
+def test_complete_exact_overview_is_returned_without_another_model_rewrite(complete_overview):
+    question = "Сравни отказы двигателя у AR-751 и AR-752."
+    overview = Mock(return_value=complete_overview)
+    llm = FakeLLM([call("summarize_topic", question=question)])
+
+    result = run_agent(question, llm, {"summarize_topic": overview}, max_steps=1)
+
+    assert result.answer == complete_overview["answer"] and not result.refused
+    assert result.sources == ["visit_first.md", "visit_second.md"]
+    assert len(result.steps) == len(llm.requests) == 1
+    assert result.steps[0].result == complete_overview and result.steps[0].error is None
+    assert not result.needs_confirmation and result.pending_action is None
+
+
+def test_complete_supplier_table_preserves_version_proofs_for_final_validation():
+    question = "Составь таблицу актуальных поставщиков насосов для AR-751 и AR-752."
+    answer = "AR-751 — P-7750B: Первый цех.\nAR-752 — P-7760: Второй цех."
+    evidence = {
+        "answer": answer, "complete": True, "refused": False, "sources": ["catalog.md", "bulletin.md"],
+        "facts": [
+            "AR-751 -HAS_PART-> P-7750", "P-7750 -IS_A-> насос",
+            "P-7750 -REPLACED_BY-> P-7750B", "P-7750B -SUPPLIED_BY-> Первый цех",
+            "AR-752 -HAS_PART-> P-7760", "P-7760 -IS_A-> насос", "P-7760 -SUPPLIED_BY-> Второй цех",
+        ],
+    }
+    llm = FakeLLM([call("summarize_topic", question=question)])
+
+    result = run_agent(question, llm, {"summarize_topic": Mock(return_value=evidence)})
+
+    assert result.answer == answer and not result.refused
+    assert result.sources == ["bulletin.md", "catalog.md"]
+    assert len(llm.requests) == 1
+
+
+@pytest.mark.parametrize("selection", [
+    "что заказывать сейчас с учётом всех замен",
+    "какую деталь заказать с учётом всех замен",
+])
+def test_complete_catalog_can_recommend_parts_without_preparing_an_order(selection):
+    question = f"Для каждой модели AR-751 и AR-752 сравни исходные артикулы насосов и {selection}."
+    answer = "AR-751 — насос: P-7750 → P-7750B.\nAR-752 — насос: P-7760 (без замены)."
+    evidence = {
+        "answer": answer, "complete": True, "refused": False, "sources": ["catalog.md", "bulletin.md"],
+        "facts": [
+            "AR-751 -HAS_PART-> P-7750", "P-7750 -IS_A-> насос", "P-7750 -REPLACED_BY-> P-7750B",
+            "AR-752 -HAS_PART-> P-7760", "P-7760 -IS_A-> насос",
+        ],
+    }
+    create = Mock()
+    llm = FakeLLM([call("summarize_topic", question=question)])
+
+    result = run_agent(question, llm, {"summarize_topic": Mock(return_value=evidence),
+                                     "create_service_order": create})
+
+    assert result.answer == answer and not result.refused
+    assert not result.needs_confirmation and result.pending_action is None
+    assert len(llm.requests) == len(result.steps) == 1
+    create.assert_not_called()
+
+
+@pytest.mark.parametrize("marker", [None, False, 1, "true"])
+def test_legacy_or_untrusted_completeness_marker_keeps_normal_agent_flow(complete_overview, marker):
+    question = "Сравни отказы двигателя у AR-751 и AR-752."
+    if marker is None:
+        complete_overview.pop("complete")
+    else:
+        complete_overview["complete"] = marker
+    llm = FakeLLM([call("summarize_topic", question=question), "Проверка завершена."])
+
+    result = run_agent(question, llm, {"summarize_topic": Mock(return_value=complete_overview)})
+
+    assert len(llm.requests) == 2
+    assert result.answer == "Проверка завершена."
+
+
+@pytest.mark.parametrize("invalid", [
+    {"refused": True}, {"error": "Сводка не прошла проверку"},
+    {"answer": "В базе знаний не найдено."}, {"answer": ""}, {"answer": 123},
+])
+def test_failed_or_empty_overview_cannot_claim_a_complete_answer(complete_overview, invalid):
+    question = "Сравни отказы двигателя у AR-751 и AR-752."
+    complete_overview.update(invalid)
+    final = "В базе знаний не найдено." if invalid.get("refused") else "Проверка завершена."
+    llm = FakeLLM([call("summarize_topic", question=question), final])
+
+    result = run_agent(question, llm, {"summarize_topic": Mock(return_value=complete_overview)})
+
+    assert len(llm.requests) == 2
+    assert result.answer == final
+
+
+def test_first_overview_uses_the_original_question_before_accepting_completeness(complete_overview):
+    question = "Сравни отказы двигателя у AR-751 и AR-752."
+    overview = Mock(return_value=complete_overview)
+    llm = FakeLLM([call("summarize_topic", question="Отказы двигателя у AR-751.")])
+
+    result = run_agent(question, llm, {"summarize_topic": overview})
+
+    overview.assert_called_once_with(question=question)
+    assert result.steps[0].args == {"question": question}
+    assert len(llm.requests) == 1 and result.answer == complete_overview["answer"]
+
+
+@pytest.mark.parametrize("first_result", [
+    {"answer": "В базе знаний не найдено.", "refused": True, "complete": False},
+    {"answer": "Проверена только часть отчётов.", "refused": False, "complete": False},
+    {"answer": "Проверена только часть отчётов.", "refused": False},
+])
+def test_partial_overview_followups_keep_their_query_and_cannot_finish_the_whole_question(first_result):
+    question = "Сравни отказы двигателя у AR-751 и AR-752."
+    followup = "Число отказов двигателя только у AR-752."
+    overview = Mock(side_effect=[first_result, {
+        "answer": "AR-752 — двигатель: 6.", "refused": False, "complete": True,
+        "facts": ["AR-752 -FAILED-> двигатель"],
+    }])
+    llm = FakeLLM([
+        call("summarize_topic", question="Общие сведения о двигателе"),
+        call("summarize_topic", question=followup),
+        "Проверка завершена.",
+    ])
+
+    result = run_agent(question, llm, {"summarize_topic": overview})
+
+    assert [item.kwargs for item in overview.call_args_list] == [{"question": question}, {"question": followup}]
+    assert [step.args for step in result.steps] == [{"question": question}, {"question": followup}]
+    assert len(llm.requests) == 3 and result.answer == "Проверка завершена."
+
+
+def test_normalized_first_overview_matches_the_recorded_call_and_cache_key():
+    question = "Сравни отказы двигателя у AR-751 и AR-752."
+    overview = Mock(return_value={"answer": "Проверка завершена.", "refused": False, "complete": False})
+    llm = FakeLLM([
+        call("summarize_topic", question="Список поставщиков вместо отказов"),
+        call("summarize_topic", question=question),
+        "Проверка завершена.",
+    ])
+
+    result = run_agent(question, llm, {"summarize_topic": overview})
+
+    overview.assert_called_once_with(question=question)
+    assert len(result.steps) == 2 and all(step.args == {"question": question} for step in result.steps)
+    tool_calls = [message["tool_calls"][0] for message in llm.requests[-1]["messages"]
+                  if message["role"] == "assistant" and message.get("tool_calls")]
+    assert len(tool_calls) == 2
+    assert all(json.loads(item["function"]["arguments"]) == {"question": question} for item in tool_calls)
+
+
+def test_first_overview_is_normalized_only_after_argument_validation():
+    question = "Сравни отказы двигателя у AR-751 и AR-752."
+    overview = Mock(return_value={"answer": "Проверка завершена.", "refused": False})
+    llm = FakeLLM([
+        call("summarize_topic", question="Отказы двигателя", unexpected="лишнее поле"),
+        call("summarize_topic", question="Отказы двигателя"),
+        "Проверка завершена.",
+    ])
+
+    result = run_agent(question, llm, {"summarize_topic": overview})
+
+    overview.assert_called_once_with(question=question)
+    assert result.steps[0].error and "аргументы" in result.steps[0].error
+    assert result.steps[0].args["unexpected"] == "лишнее поле"
+    assert result.steps[1].args == {"question": question} and not result.steps[1].error
+
+
+def test_overview_after_a_local_refusal_keeps_its_narrow_followup():
+    question = "Кто поставщик детали P-7750?"
+    followup = "Поставщик P-7750 по сводкам."
+    search = Mock(return_value={"answer": "В базе знаний не найдено.", "refused": True})
+    overview = Mock(return_value={"answer": "Первый цех", "refused": False,
+                                 "facts": ["P-7750 -SUPPLIED_BY-> Первый цех"]})
+    llm = FakeLLM([
+        call("search_knowledge", question=question),
+        call("summarize_topic", question=followup),
+        "Первый цех",
+    ])
+
+    result = run_agent(question, llm, {"search_knowledge": search, "summarize_topic": overview})
+
+    overview.assert_called_once_with(question=followup)
+    assert result.steps[1].args == {"question": followup}
+    assert result.answer == "Первый цех" and not result.refused
+
+
+def test_normalizing_an_overview_preserves_the_requested_erp_price(complete_overview):
+    question = "Сравни отказы двигателя у AR-751 и AR-752. Узнай цену P-7750."
+    overview = Mock(return_value=complete_overview)
+    price = Mock(return_value={"part_id": "P-7750", "price_rub": 1730})
+    create = Mock()
+    llm = FakeLLM([
+        call("summarize_topic", question="Сравни отказы двигателя у AR-751 и AR-752."),
+        call("get_price", part_id="P-7750"),
+        "Цена P-7750 — 1730 рублей.",
+    ])
+
+    result = run_agent(question, llm, {"summarize_topic": overview, "get_price": price,
+                                     "create_service_order": create})
+
+    overview.assert_called_once_with(question=question)
+    price.assert_called_once_with(part_id="P-7750")
+    create.assert_not_called()
+    assert len(llm.requests) == 3 and result.answer == "Цена P-7750 — 1730 рублей."
+    assert not result.refused and not result.needs_confirmation and result.pending_action is None
+
+
+@pytest.mark.parametrize("extra", [
+    "Укажи цену.", "Укажи стоимость.", "Сколько стоит деталь?", "Почём деталь?",
+    "Укажи остаток.", "Проверь наличие.", "Проверь склад.", "Получи данные ERP.",
+    "Сколько доступно сейчас?", "Уточни параметры заказа.", "Покажи параметры заявки.",
+])
+def test_complete_overview_does_not_hide_additional_erp_or_order_fields(complete_overview, extra):
+    question = f"Сравни отказы двигателя у AR-751 и AR-752. {extra}"
+    llm = FakeLLM([call("summarize_topic", question=question), "Проверка завершена."])
+
+    result = run_agent(question, llm, {"summarize_topic": Mock(return_value=complete_overview)})
+
+    assert len(llm.requests) == 2 and result.answer == "Проверка завершена."
+
+
+@pytest.mark.parametrize("overview_first", [True, False])
+def test_complete_overview_waits_for_all_knowledge_calls_in_its_batch(complete_overview, overview_first):
+    question = "Сравни отказы двигателя у AR-751 и AR-752."
+    searches = [ToolCall("overview", "summarize_topic", {"question": question}),
+                ToolCall("details", "search_knowledge", {"question": "Проверка двигателя"})]
+    if not overview_first:
+        searches.reverse()
+    search = Mock(return_value={"answer": "Проверка выполнена.", "sources": ["manual_extra.md"]})
+    llm = FakeLLM([LLMResponse("", searches)])
+
+    result = run_agent(question, llm, {"summarize_topic": Mock(return_value=complete_overview),
+                                     "search_knowledge": search})
+
+    assert result.answer == complete_overview["answer"] and not result.refused
+    search.assert_called_once_with(question="Проверка двигателя")
+    assert [step.tool for step in result.steps] == [item.name for item in searches]
+    assert result.sources == ["manual_extra.md", "visit_first.md", "visit_second.md"]
+    assert len(llm.requests) == 1
+
+
+def test_complete_overview_does_not_finish_a_partially_executed_batch(complete_overview):
+    question = "Сравни отказы двигателя у AR-751 и AR-752."
+    search = Mock()
+    llm = FakeLLM([LLMResponse("", [
+        ToolCall("overview", "summarize_topic", {"question": question}),
+        ToolCall("details", "search_knowledge", {"question": question}),
+    ])])
+
+    result = run_agent(question, llm, {"summarize_topic": Mock(return_value=complete_overview),
+                                     "search_knowledge": search}, max_steps=1)
+
+    assert "лимит" in result.answer and len(result.steps) == 1
+    search.assert_not_called()
+
+
+def test_complete_overview_does_not_skip_erp_in_the_same_batch(complete_overview):
+    question = "Сравни отказы двигателя у AR-751 и AR-752 для детали P-7750."
+    price = Mock(return_value={"part_id": "P-7750", "price_rub": 1730})
+    llm = FakeLLM([
+        LLMResponse("", [ToolCall("overview", "summarize_topic", {"question": question}),
+                         ToolCall("price", "get_price", {"part_id": "P-7750"})]),
+        "Дополнительная проверка выполнена.",
+    ])
+
+    result = run_agent(question, llm, {"summarize_topic": Mock(return_value=complete_overview), "get_price": price})
+
+    price.assert_called_once_with(part_id="P-7750")
+    assert [step.tool for step in result.steps] == ["summarize_topic", "get_price"]
+    assert len(llm.requests) == 2 and result.answer == "Дополнительная проверка выполнена."
+
+
+def test_complete_overview_does_not_hide_an_invalid_tool_call_in_the_batch(complete_overview):
+    question = "Сравни отказы двигателя у AR-751 и AR-752."
+    llm = FakeLLM([
+        LLMResponse("", [ToolCall("overview", "summarize_topic", {"question": question}),
+                         ToolCall("unknown", "erase_data", {})]),
+        "Проверку нужно повторить.",
+    ])
+
+    result = run_agent(question, llm, {"summarize_topic": Mock(return_value=complete_overview)})
+
+    assert len(result.steps) == 2 and result.steps[-1].error == "Неизвестный инструмент"
+    assert len(llm.requests) == 2 and result.answer == "Проверку нужно повторить."
+
+
+@pytest.mark.parametrize("action", ["подготовь заказ", "оформи заявку"])
+def test_complete_overview_does_not_replace_order_confirmation(complete_overview, action):
+    question = f"Сравни отказы двигателя и {action} на 2 шт. P-7750 для GS-751, склад Москва."
+    order = {"part_id": "P-7750", "warehouse": "Москва", "qty": 2, "model": "GS-751"}
+    create = Mock()
+    overview = Mock(return_value=complete_overview)
+    llm = FakeLLM([call("summarize_topic", question="Частые отказы двигателя"),
+                   call("create_service_order", **order)])
+
+    result = run_agent(question, llm, {"summarize_topic": overview,
+                                     "create_service_order": create})
+
+    overview.assert_called_once_with(question=question)
+    assert result.needs_confirmation and result.pending_action == {"tool": "create_service_order", "args": order}
+    assert len(llm.requests) == len(result.steps) == 2
+    create.assert_not_called()
+
+
+def test_complete_overview_still_goes_through_final_fact_validation(complete_overview):
+    question = "Сравни отказы двигателя у AR-751 и AR-752."
+    complete_overview["answer"] = "Цена детали — 1730 рублей."
+    llm = FakeLLM([call("summarize_topic", question=question)])
+
+    result = run_agent(question, llm, {"summarize_topic": Mock(return_value=complete_overview)})
+
+    assert result.refused and "1730" not in result.answer
+    assert len(llm.requests) == 1
 
 
 def test_search_preserves_current_part_requirement_even_without_a_supplier_question():
@@ -154,7 +504,8 @@ def test_overview_preserves_the_original_catalog_part_constraint():
 
     overview.assert_called_once_with(question=question)
     assert not result.refused and result.answer == "P-9070."
-    assert len(result.steps) == 2 and "исходных" in result.steps[0].error
+    assert len(result.steps) == 2 and all(not step.error for step in result.steps)
+    assert all(step.args == {"question": question} for step in result.steps)
 
 
 @pytest.mark.parametrize(
@@ -775,16 +1126,17 @@ def test_complete_supplier_queries_and_other_document_questions_are_not_blocked(
     assert len(result.steps) == 1 and not result.steps[0].error and not result.refused
 
 
-def test_supplier_argument_check_does_not_change_overview_calls():
+def test_first_overview_retains_the_supplier_requirement_from_the_original_question():
     overview = Mock(return_value={"answer": "Поставщик СеверПрибор.", "refused": False})
     query = "Обзор деталей линейки Север"
+    question = "Какие поставщики у линейки Север?"
     result = run_agent(
-        "Какие поставщики у линейки Север?",
+        question,
         FakeLLM([call("summarize_topic", question=query), "Поставщик СеверПрибор."]),
         {"summarize_topic": overview},
     )
 
-    overview.assert_called_once_with(question=query)
+    overview.assert_called_once_with(question=question)
     assert len(result.steps) == 1 and not result.steps[0].error and not result.refused
 
 
@@ -1716,6 +2068,87 @@ def test_overview_is_not_redirected_even_when_it_mentions_one_model(question):
     assert result.refused and not result.steps[0].error
     overview.assert_called_once_with(question=question)
     search.assert_not_called()
+
+
+@pytest.mark.parametrize('question', [
+    'Для каждого моноблока линейки «Бриз» составь памятку по нагревателю оттайки: '
+    'модель, исходный номер из руководства и что заказывать сейчас с учётом всех замен.',
+    'Составь общую таблицу реле давления для всей линейки «Гольфстрим»: '
+    'модель, актуальный артикул, нынешний поставщик.',
+    'Перечисли всех поставщиков реле протока в линейке «Гольфстрим».',
+    'Какие артикулы компрессора встречаются в линейке «Бриз»?',
+    'Для каждой модели линейки «Арктика» покажи исходный и текущий артикул вентилятора испарителя.',
+    'Для GS-410 и GS-510 сделай таблицу: модель и артикул реле протока.',
+    'Для AR-210 и AR-310 нужен один и тот же компрессор или разные? Укажи артикул для каждой модели.',
+    'P-3066 и P-3166 — одинаковые детали? Перечисли различия.',
+    'По реле давления: вся линейка «Гольфстрим» одной таблицей.',
+    'Распиши артикулы контроллера по моделям, включая BZ-210.',
+])
+def test_component_or_codes_do_not_turn_a_requested_overview_into_an_exact_lookup(question):
+    overview = Mock(return_value={'answer': 'В базе знаний не найдено.', 'refused': True})
+    search = Mock()
+    llm = FakeLLM([
+        call('summarize_topic', question=question),
+        'В базе знаний не найдено.',
+        'В базе знаний не найдено.',
+    ])
+
+    result = run_agent(question, llm, {'summarize_topic': overview, 'search_knowledge': search})
+
+    assert result.refused and len(result.steps) == 1
+    assert not result.steps[0].error
+    overview.assert_called_once_with(question=question)
+    search.assert_not_called()
+
+
+def test_comparison_table_can_be_answered_from_an_overview_without_local_lookup():
+    question = 'Для GS-410 и GS-510 сделай таблицу: модель и артикул реле протока.'
+    answer = '| Модель | Артикул |\n| GS-410 | P-3066 |\n| GS-510 | P-3166 |'
+    overview = Mock(return_value={
+        'answer': answer,
+        'facts': ['GS-410 -HAS_PART-> P-3066', 'GS-510 -HAS_PART-> P-3166'],
+        'sources': ['manual_GS-410.md', 'manual_GS-510.md'],
+        'refused': False,
+    })
+    search = Mock()
+    llm = FakeLLM([call('summarize_topic', question=question), answer])
+
+    result = run_agent(question, llm, {'summarize_topic': overview, 'search_knowledge': search})
+
+    assert result.answer == answer and not result.refused
+    assert result.sources == ['manual_GS-410.md', 'manual_GS-510.md']
+    assert len(result.steps) == 1 and len(llm.requests) == 2
+    overview.assert_called_once_with(question=question)
+    search.assert_not_called()
+
+
+@pytest.mark.parametrize('question,answer,facts', [
+    ('Какая текущая деталь реле давления для GS-520 из линейки «Гольфстрим»?', 'P-3126B.',
+     ['GS-520 -HAS_PART-> P-3126', 'P-3126 -REPLACED_BY-> P-3126B']),
+    ('Какие поставщики выпускают P-3126 для GS-520 из линейки «Гольфстрим»?', 'ХолодКомплект.',
+     ['P-3126 -SUPPLIED_BY-> ХолодКомплект']),
+    ('Кто из всех поставщиков выпускает деталь P-2126?', 'ХолодКомплект.',
+     ['P-2126 -SUPPLIED_BY-> ХолодКомплект']),
+    ('Какой регламент нужен при E-23 на GS-520 из линейки «Гольфстрим»?', 'SP-113.',
+     ['E-23 -FIXED_BY-> SP-113']),
+    ('Назови артикул реле протока для модели GS-520.', 'P-3166.',
+     ['GS-520 -HAS_PART-> P-3166', 'P-3166 -IS_A-> реле протока']),
+])
+def test_single_equipment_or_part_keeps_exact_search_even_when_a_line_is_named(question, answer, facts):
+    overview = Mock()
+    search = Mock(return_value={'answer': answer, 'facts': facts, 'sources': ['manual.md']})
+    llm = FakeLLM([
+        call('summarize_topic', question=question),
+        call('search_knowledge', question=question),
+        answer,
+    ])
+
+    result = run_agent(question, llm, {'summarize_topic': overview, 'search_knowledge': search})
+
+    assert result.answer == answer and not result.refused
+    assert result.steps[0].error and not result.steps[1].error
+    overview.assert_not_called()
+    search.assert_called_once_with(question=question)
 
 
 def test_overview_remains_available_after_local_search_has_no_answer():

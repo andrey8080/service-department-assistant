@@ -41,6 +41,12 @@ part_id — код детали P-…, а AR-…, BZ-… и GS-… обозна�
 Если вопрос просит только цену/остаток, заказ не создавай.
 Если ERP недоступна, сообщи об этом. Отсутствие записи и остаток 0 — разные результаты.
 Когда данных нет, напиши «В базе знаний не найдено»."""
+OVERVIEW_SYSTEM = SYSTEM.replace(
+    "summarize_topic используй для обзора целой линейки: частых отказов, сравнения моделей и снятых деталей.",
+    "summarize_topic используй для обзора целой линейки, таблиц по моделям и сравнения наборов деталей:\n"
+    "частых отказов, всех артикулов и поставщиков выбранного узла, снятых деталей. Название узла и коды\n"
+    "моделей в таком вопросе задают охват обзора и не превращают его в запрос одного конкретного факта.",
+)
 
 
 def _observations(results: list[tuple[str, dict]]) -> str:
@@ -73,8 +79,29 @@ def _local_first(question):
         question, re.I,
     ):
         return False
-    return bool(find_codes(question)) or any(
-        kind == "Component" for kind, _ in find_names(question, vocabulary())
+    codes = find_codes(question)
+    names = find_names(question, vocabulary())
+    multiple_items = any(sum(code_type(code) == kind for code in codes) > 1 for kind in ("Model", "Part"))
+    whole_set = re.search(
+        r"таблиц|по\s+модел|\b(?:все|всех|всей|кажд\w*)\s+"
+        r"(?:(?:из|модел\w*|эт\w*)\s+)?(?:линейк|семейств|модел|моноблок)",
+        question, re.I,
+    )
+    if codes and not multiple_items and not whole_set:
+        return True
+    set_scope = (
+        re.search(r"линейк|семейств|\bсерии\b|\bмодел(?:ям|ей)\b|\bмоноблок(?:ам|ов)\b", question, re.I)
+        or any(kind == "ProductLine" for kind, _ in names)
+        or multiple_items
+    )
+    if set_scope and re.search(
+        r"таблиц|по\s+модел|\b(?:все|всех|всей|кажд\w*|какие|каких)\b|"
+        r"один\s+и\s+тот\s+же|одинаков|различ|разн\w*|отлич",
+        question, re.I,
+    ):
+        return False
+    return bool(codes) or any(
+        kind == "Component" for kind, _ in names
     )
 
 
@@ -172,6 +199,24 @@ def _order_details_known(question: str, results: list[tuple[str, dict]]) -> bool
         and (0 < len(warehouses) < len(WAREHOUSES) or any(
             value.get("warehouse") in WAREHOUSES for _, value in results
         ))
+    )
+
+
+def _complete_overview(question: str, args: dict, value: dict) -> bool:
+    answer = value.get("answer")
+    return (
+        value.get("complete") is True
+        and args.get("question") == question
+        and not value.get("error")
+        and not value.get("refused")
+        and isinstance(answer, str)
+        and bool(answer.strip())
+        and "в базе знаний не найдено" not in answer.lower()
+        and not re.search(
+            r"цен[аыуе]|стоим|стоит|стоят|поч[её]м|рубл|остат|налич|склад|доступн|"
+            r"\berp\b|уч[её]тн|параметр\w*\s+(?:заказ|заявк)",
+            question, re.I,
+        )
     )
 
 
@@ -281,7 +326,9 @@ def run_agent(
     confirm: bool = False,
 ) -> AgentResult:
     """Выполняет ограниченный цикл; правила подтверждения проверяет код, а не модель."""
-    messages = [{"role": "system", "content": SYSTEM}, {"role": "user", "content": question}]
+    local_first = _local_first(question)
+    base_system = SYSTEM if local_first else OVERVIEW_SYSTEM
+    messages = [{"role": "system", "content": base_system}, {"role": "user", "content": question}]
     steps: list[ToolStep] = []
     sources: set[str] = set()
     results: list[tuple[str, dict]] = []
@@ -294,6 +341,7 @@ def run_agent(
     erp_failed = False
     answer_style_set = False
     supplier_search_reminded = False
+    overview_started = False
 
     def finish(text: str, **kwargs) -> AgentResult:
         if unsupported_facts(text, question, results) or unsupported_erp_claims(text):
@@ -317,7 +365,8 @@ def run_agent(
                 for schema in TOOL_SCHEMAS
             ]
         response = llm.chat(messages, tools=schemas)
-        messages.append(response.as_message())
+        assistant_message = response.as_message()
+        messages.append(assistant_message)
         if not response.tool_calls:
             text = response.content.strip()
             erp_claim = unsupported_erp_claims(text)
@@ -429,7 +478,9 @@ def run_agent(
                     text = REFUSAL
             return finish(text or REFUSAL, refused=no_data or not text)
 
-        for call in response.tool_calls:
+        batch_start = len(steps)
+        complete_overview = None
+        for call_index, call in enumerate(response.tool_calls):
             if len(steps) >= max_steps:
                 break
             args = call.arguments
@@ -446,11 +497,17 @@ def run_agent(
                     args = validate_arguments(call.name, args)
                 except (ValueError, TypeError) as exc:
                     error = f"Некорректные аргументы: {exc}"
+            if not error and call.name == "summarize_topic" and not local_first and not overview_started:
+                args = {**args, "question": question}
+                assistant_message["tool_calls"][call_index]["function"]["arguments"] = json.dumps(
+                    args, ensure_ascii=False,
+                )
+                overview_started = True
             if (
                 not error
                 and call.name == "summarize_topic"
                 and "search_knowledge" in tools
-                and _local_first(question)
+                and local_first
                 and not any(name == "search_knowledge" for name, _ in results)
             ):
                 error = LOCAL_FIRST
@@ -578,6 +635,8 @@ def run_agent(
                     }
                 results.append((call.name, value))
                 sources.update(value.get("sources", []))
+                if call.name == "summarize_topic" and _complete_overview(question, args, value):
+                    complete_overview = value["answer"]
                 if (
                     not supplier_search_reminded
                     and call.name == "search_knowledge"
@@ -600,7 +659,7 @@ def run_agent(
                 if not answer_style_set:
                     messages[0] = {
                         "role": "system",
-                        "content": SYSTEM + "\nКогда все нужные проверки закончены, ответь в 1–3 предложениях "
+                        "content": base_system + "\nКогда все нужные проверки закончены, ответь в 1–3 предложениях "
                         "только на исходный вопрос. Не обсуждай цену, наличие, заказ и поставщика, если их "
                         "не спрашивали. Снятие с производства относится к детали, не к модели оборудования. "
                         "Не переноси свойства детали на модель.",
@@ -614,6 +673,14 @@ def run_agent(
                             "Для поставщика используй отдельный запрос по найденному артикулу, для регламента "
                             "— по ошибке. После уточнения не теряй уже найденные части ответа."
                         )
+        if (
+            complete_overview is not None
+            and not order_requested
+            and len(steps) - batch_start == len(response.tool_calls)
+            and all(step.tool in {"search_knowledge", "summarize_topic"} for step in steps)
+            and not any(_tool_errors(steps).values())
+        ):
+            return finish(complete_overview)
 
     text = _observations(results)
     if erp_failed:

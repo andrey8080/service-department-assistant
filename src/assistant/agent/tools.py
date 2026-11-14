@@ -5,7 +5,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr, field_validator
 
-from assistant.graphrag.search import global_search, local_search
+from assistant.graphrag.search import OverviewAnswer, global_search, local_search
 from assistant.infra.erp_client import ErpClient, ErpNotFound, ErpRejected
 from assistant.infra.grounding import code_type, normalize_code
 from assistant.infra.llm import LLMClient
@@ -99,7 +99,11 @@ def build_tools(kb: KnowledgeBase, llm: LLMClient, erp: ErpClient) -> dict[str, 
 
     def summarize_topic(question):
         answer = global_search(question, kb, llm)
-        return {"answer": answer.text, "sources": answer.sources, "refused": answer.refused}
+        result = {"answer": answer.text, "sources": answer.sources, "refused": answer.refused}
+        if isinstance(answer, OverviewAnswer) and not answer.refused:
+            result["complete"] = True
+            result["facts"] = answer.facts
+        return result
 
     functions = {
         "search_knowledge": search_knowledge,
